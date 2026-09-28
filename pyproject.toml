@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geoscalex"
+version = "0.1.0"
+description = "Local-first dataset and evaluation lab for adaptive GIS generalization"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiosqlite>=0.20",
+  "alembic>=1.16",
+  "duckdb>=1.4",
+  "fastapi>=0.118,<0.119",
+  "numpy>=2.2",
+  "pyarrow>=21",
+  "pydantic-settings>=2.10",
+  "pyproj>=3.7",
+  "python-multipart>=0.0.20",
+  "shapely>=2.1",
+  "sqlalchemy[asyncio]>=2.0",
+  "starlette>=0.48,<0.49",
+  "uvicorn[standard]>=0.37"
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28",
+  "mypy>=1.18",
+  "pytest>=8.4",
+  "pytest-asyncio>=1.2",
+  "ruff>=0.13"
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28",
+  "mypy>=1.18",
+  "pytest>=8.4",
+  "pytest-asyncio>=1.2",
+  "ruff>=0.13"
+]
+
+[project.scripts]
+geoscalex-api = "geoscalex.api.main:run"
+geoscalex-worker = "geoscalex.worker.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geoscalex"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests/python"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["geoscalex"]
+plugins = ["pydantic.mypy"]
