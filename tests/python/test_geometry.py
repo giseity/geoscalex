@@ -5,7 +5,6 @@ import pytest
 from geoscalex.geometry.analysis import GeometryValidationError, validate_geometry
 from geoscalex.geometry.simplify import add_polygon_hole, build_candidate, hierarchy_scores
 
-
 LINE = {
     "type": "LineString",
     "coordinates": [[0, 0], [1, 0.1], [2, 2], [3, 0.1], [4, 0]],

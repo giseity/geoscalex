@@ -7,7 +7,11 @@ from typing import Any
 
 from shapely.geometry import Polygon
 
-from geoscalex.geometry.analysis import GeometryValidationError, comparison_metrics, validate_geometry
+from geoscalex.geometry.analysis import (
+    GeometryValidationError,
+    comparison_metrics,
+    validate_geometry,
+)
 
 Point = tuple[float, float]
 
@@ -23,7 +27,10 @@ def _distance_to_segment(point: Point, start: Point, end: Point) -> float:
     dx, dy = end[0] - start[0], end[1] - start[1]
     if dx == 0 and dy == 0:
         return math.dist(point, start)
-    t = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / (dx * dx + dy * dy)))
+    t = max(
+        0.0,
+        min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / (dx * dx + dy * dy)),
+    )
     projection = (start[0] + t * dx, start[1] + t * dy)
     return math.dist(point, projection)
 
@@ -165,7 +172,7 @@ def hierarchy_scores(geometry: dict[str, Any], method: str) -> Hierarchy:
     rings = _rings(normalized)
     all_scores: list[float] = []
     protected: list[bool] = []
-    for ring_index, ring in enumerate(rings):
+    for ring in rings:
         closed = normalized["type"] == "Polygon"
         if method == "douglas-peucker":
             scores = _dp_ring(ring) if closed else _dp_open(ring)
@@ -191,11 +198,15 @@ def _candidate_from_selection(
 ) -> dict[str, Any]:
     cursor = 0
     output_rings: list[list[list[float]]] = []
-    for ring_index, ring in enumerate(_rings(geometry)):
+    for ring in _rings(geometry):
         ring_indices = list(range(cursor, cursor + len(ring)))
         cursor += len(ring)
         if geometry["type"] == "LineString":
-            kept = [list(point) for index, point in zip(ring_indices, ring, strict=True) if index in selected]
+            kept = [
+                list(point)
+                for index, point in zip(ring_indices, ring, strict=True)
+                if index in selected
+            ]
             return {"type": "LineString", "coordinates": kept}
 
         unique = ring[:-1]
@@ -219,7 +230,11 @@ def _candidate_from_selection(
 
 
 def build_candidate(
-    geometry: dict[str, Any], method: str, *, tolerance: float | None = None, budget: int | None = None
+    geometry: dict[str, Any],
+    method: str,
+    *,
+    tolerance: float | None = None,
+    budget: int | None = None,
 ) -> tuple[dict[str, Any], Hierarchy, dict[str, Any]]:
     normalized = validate_geometry(geometry).geometry
     hierarchy = hierarchy_scores(normalized, method)

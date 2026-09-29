@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID
 
 from shapely import from_wkb, to_wkb
@@ -23,10 +23,10 @@ from geoscalex.domain import (
     DatasetRead,
     FeatureCreate,
     FeatureRead,
-    GeoJsonImportCreate,
     GeneratorRunCreate,
-    JobRead,
+    GeoJsonImportCreate,
     ImportResult,
+    JobRead,
     RevisionCreate,
     RevisionRead,
     WorkspaceCreate,
@@ -37,8 +37,6 @@ from geoscalex.geometry.analysis import validate_geometry
 from geoscalex.geometry.simplify import add_polygon_hole, build_candidate
 from geoscalex.storage import models
 
-ModelT = TypeVar("ModelT", bound=models.Record)
-
 
 def geometry_checksum(geometry: dict[str, Any], properties: dict[str, Any]) -> str:
     payload = json.dumps(
@@ -47,7 +45,9 @@ def geometry_checksum(geometry: dict[str, Any], properties: dict[str, Any]) -> s
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-async def require(session: AsyncSession, model: type[ModelT], record_id: UUID | str) -> ModelT:
+async def require[ModelT: models.Record](
+    session: AsyncSession, model: type[ModelT], record_id: UUID | str
+) -> ModelT:
     record = await session.get(model, str(record_id))
     if record is None:
         raise LookupError(f"{model.__name__} not found")
@@ -63,7 +63,9 @@ async def create_workspace(session: AsyncSession, data: WorkspaceCreate) -> Work
 
 
 async def list_workspaces(session: AsyncSession) -> list[WorkspaceRead]:
-    records = (await session.scalars(select(models.Workspace).order_by(models.Workspace.created_at))).all()
+    records = (
+        await session.scalars(select(models.Workspace).order_by(models.Workspace.created_at))
+    ).all()
     return [WorkspaceRead.model_validate(record) for record in records]
 
 
@@ -204,6 +206,18 @@ async def get_feature(session: AsyncSession, feature_id: UUID) -> FeatureRead:
     return await feature_read(session, await require(session, models.Feature, feature_id))
 
 
+async def list_revisions(session: AsyncSession, feature_id: UUID) -> list[RevisionRead]:
+    await require(session, models.Feature, feature_id)
+    records = (
+        await session.scalars(
+            select(models.GeometryRevision)
+            .where(models.GeometryRevision.feature_id == str(feature_id))
+            .order_by(models.GeometryRevision.sequence.desc())
+        )
+    ).all()
+    return [revision_read(record) for record in records]
+
+
 async def add_revision(
     session: AsyncSession, feature_id: UUID, data: RevisionCreate
 ) -> FeatureRead:
@@ -232,6 +246,24 @@ async def add_revision(
     await session.commit()
     await session.refresh(feature)
     return await feature_read(session, feature)
+
+
+async def restore_revision(
+    session: AsyncSession, feature_id: UUID, revision_id: UUID
+) -> FeatureRead:
+    feature = await require(session, models.Feature, feature_id)
+    revision = await require(session, models.GeometryRevision, revision_id)
+    if revision.feature_id != feature.id:
+        raise ValueError("Revision does not belong to this feature")
+    return await add_revision(
+        session,
+        feature_id,
+        RevisionCreate(
+            geometry=revision.geometry_geojson,
+            properties=revision.properties,
+            change_kind=f"restore-r{revision.sequence}",
+        ),
+    )
 
 
 async def add_hole(session: AsyncSession, feature_id: UUID, hole: dict[str, Any]) -> FeatureRead:
@@ -278,13 +310,12 @@ async def set_archived(session: AsyncSession, feature_id: UUID, archived: bool) 
     return await feature_read(session, feature)
 
 
-async def add_to_collection(
-    session: AsyncSession, collection_id: UUID, feature_id: UUID
-) -> None:
+async def add_to_collection(session: AsyncSession, collection_id: UUID, feature_id: UUID) -> None:
     await require(session, models.Collection, collection_id)
     await require(session, models.Feature, feature_id)
     existing = await session.get(
-        models.CollectionFeature, {"collection_id": str(collection_id), "feature_id": str(feature_id)}
+        models.CollectionFeature,
+        {"collection_id": str(collection_id), "feature_id": str(feature_id)},
     )
     if existing is None:
         session.add(
@@ -293,9 +324,18 @@ async def add_to_collection(
         await session.commit()
 
 
-async def create_annotation(
-    session: AsyncSession, data: AnnotationCreate
-) -> AnnotationRead:
+async def create_annotation(session: AsyncSession, data: AnnotationCreate) -> AnnotationRead:
+    await require(session, models.Dataset, data.dataset_id)
+    feature = await require(session, models.Feature, data.feature_id)
+    revision = await require(session, models.GeometryRevision, data.revision_id)
+    if feature.dataset_id != str(data.dataset_id) or revision.feature_id != feature.id:
+        raise ValueError("Annotation feature, revision, and dataset do not match")
+    for candidate_id in (data.candidate_a_id, data.candidate_b_id):
+        if candidate_id is None:
+            continue
+        candidate = await require(session, models.Candidate, candidate_id)
+        if candidate.revision_id != revision.id:
+            raise ValueError("Annotation candidates must belong to the annotated revision")
     record = models.ComparisonAnnotation(**data.model_dump(mode="json"))
     session.add(record)
     await session.commit()
@@ -367,11 +407,17 @@ def job_read(record: models.Job) -> JobRead:
     return JobRead.model_validate(record)
 
 
-async def enqueue_generator_run(session: AsyncSession, data: GeneratorRunCreate, code_hash: str, version: str) -> JobRead:
+async def enqueue_generator_run(
+    session: AsyncSession, data: GeneratorRunCreate, code_hash: str, version: str
+) -> JobRead:
     await require(session, models.Dataset, data.dataset_id)
     job = models.Job(
         kind="generator-run",
-        payload={**data.model_dump(mode="json"), "generator_version": version, "code_hash": code_hash},
+        payload={
+            **data.model_dump(mode="json"),
+            "generator_version": version,
+            "code_hash": code_hash,
+        },
     )
     session.add(job)
     await session.commit()
@@ -380,7 +426,11 @@ async def enqueue_generator_run(session: AsyncSession, data: GeneratorRunCreate,
 
 
 async def list_jobs(session: AsyncSession, limit: int = 100) -> list[JobRead]:
-    records = (await session.scalars(select(models.Job).order_by(models.Job.created_at.desc()).limit(limit))).all()
+    records = (
+        await session.scalars(
+            select(models.Job).order_by(models.Job.created_at.desc()).limit(limit)
+        )
+    ).all()
     return [job_read(record) for record in records]
 
 
@@ -400,7 +450,9 @@ async def request_job_cancel(session: AsyncSession, job_id: UUID) -> JobRead:
 
 async def import_geojson(session: AsyncSession, data: GeoJsonImportCreate) -> ImportResult:
     collection = data.feature_collection
-    if collection.get("type") != "FeatureCollection" or not isinstance(collection.get("features"), list):
+    if collection.get("type") != "FeatureCollection" or not isinstance(
+        collection.get("features"), list
+    ):
         raise ValueError("Expected a GeoJSON FeatureCollection")
     batch = await create_batch(
         session,
@@ -434,4 +486,6 @@ async def import_geojson(session: AsyncSession, data: GeoJsonImportCreate) -> Im
             imported.append(feature.id)
         except Exception as error:
             rejected.append({"index": index, "reason": str(error)})
-    return ImportResult(batch=batch, imported=len(imported), rejected=rejected, feature_ids=imported)
+    return ImportResult(
+        batch=batch, imported=len(imported), rejected=rejected, feature_ids=imported
+    )

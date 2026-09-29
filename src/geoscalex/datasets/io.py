@@ -59,10 +59,13 @@ async def publish_dataset(
     export_dir.mkdir(parents=True, exist_ok=False)
     rows: list[dict[str, Any]] = []
     version_items: list[tuple[models.Feature, models.GeometryRevision, str]] = []
+    revision_ids: list[str] = []
     for feature in features:
         if feature.current_revision_id is None:
             continue
-        revision = await repository.require(session, models.GeometryRevision, feature.current_revision_id)
+        revision = await repository.require(
+            session, models.GeometryRevision, feature.current_revision_id
+        )
         dp = hierarchy_scores(revision.geometry_geojson, "douglas-peucker")
         vw = hierarchy_scores(revision.geometry_geojson, "visvalingam-whyatt")
         metrics = analyze_geometry(revision.geometry_geojson)
@@ -91,18 +94,100 @@ async def publish_dataset(
             }
         )
         version_items.append((feature, revision, split))
+        revision_ids.append(revision.id)
 
     parquet_path = export_dir / "features.parquet"
     table = pa.Table.from_pylist(rows)
     pq.write_table(table, parquet_path, compression="zstd", row_group_size=10_000)
+
+    candidates = (
+        await session.scalars(
+            select(models.Candidate)
+            .where(models.Candidate.revision_id.in_(revision_ids))
+            .order_by(models.Candidate.id)
+        )
+    ).all()
+    candidate_rows = [
+        {
+            "candidate_id": candidate.id,
+            "revision_id": candidate.revision_id,
+            "method": candidate.method,
+            "method_version": candidate.method_version,
+            "parameters_json": json.dumps(candidate.parameters, sort_keys=True),
+            "geometry_wkb": to_wkb(shape(candidate.geometry_geojson)),
+            "metrics_json": json.dumps(candidate.metrics, sort_keys=True),
+        }
+        for candidate in candidates
+    ]
+    candidate_schema = pa.schema(
+        [
+            ("candidate_id", pa.string()),
+            ("revision_id", pa.string()),
+            ("method", pa.string()),
+            ("method_version", pa.string()),
+            ("parameters_json", pa.string()),
+            ("geometry_wkb", pa.binary()),
+            ("metrics_json", pa.string()),
+        ]
+    )
+    candidates_path = export_dir / "candidates.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(candidate_rows, schema=candidate_schema),
+        candidates_path,
+        compression="zstd",
+    )
+
+    annotations = (
+        await session.scalars(
+            select(models.ComparisonAnnotation)
+            .where(models.ComparisonAnnotation.dataset_id == str(dataset_id))
+            .where(models.ComparisonAnnotation.revision_id.in_(revision_ids))
+            .order_by(models.ComparisonAnnotation.id)
+        )
+    ).all()
+    annotation_rows = [
+        {
+            "annotation_id": annotation.id,
+            "feature_id": annotation.feature_id,
+            "revision_id": annotation.revision_id,
+            "candidate_a_id": annotation.candidate_a_id,
+            "candidate_b_id": annotation.candidate_b_id,
+            "choice": annotation.choice,
+            "viewport_json": json.dumps(annotation.viewport, sort_keys=True),
+            "comment": annotation.comment,
+        }
+        for annotation in annotations
+    ]
+    annotation_schema = pa.schema(
+        [
+            ("annotation_id", pa.string()),
+            ("feature_id", pa.string()),
+            ("revision_id", pa.string()),
+            ("candidate_a_id", pa.string()),
+            ("candidate_b_id", pa.string()),
+            ("choice", pa.string()),
+            ("viewport_json", pa.string()),
+            ("comment", pa.string()),
+        ]
+    )
+    annotations_path = export_dir / "annotations.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(annotation_rows, schema=annotation_schema),
+        annotations_path,
+        compression="zstd",
+    )
+
     with duckdb.connect() as connection:
-        count = connection.execute(
+        result = connection.execute(
             "SELECT count(*) FROM read_parquet(?)", [str(parquet_path)]
-        ).fetchone()[0]
+        ).fetchone()
+        if result is None:
+            raise RuntimeError("DuckDB export verification returned no result")
+        count = result[0]
     if count != len(rows):
         raise RuntimeError("DuckDB export verification failed")
 
-    parquet_checksum = _checksum(parquet_path)
+    export_files = [parquet_path, candidates_path, annotations_path]
     manifest = {
         "format": "geoscalex-dataset",
         "schema_version": 1,
@@ -111,7 +196,9 @@ async def publish_dataset(
         "version": version_number,
         "split_seed": split_seed,
         "feature_count": len(rows),
-        "files": [{"path": "features.parquet", "sha256": parquet_checksum}],
+        "candidate_count": len(candidate_rows),
+        "annotation_count": len(annotation_rows),
+        "files": [{"path": path.name, "sha256": _checksum(path)} for path in export_files],
     }
     manifest_path = export_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Response, status
 
 from geoscalex.api.dependencies import DatabaseSession
+from geoscalex.datasets.io import list_versions, publish_dataset
 from geoscalex.domain import (
     AnnotationCreate,
     AnnotationRead,
@@ -13,25 +14,25 @@ from geoscalex.domain import (
     CollectionCreate,
     CollectionRead,
     DatasetCreate,
+    DatasetPublishCreate,
     DatasetRead,
+    DatasetVersionRead,
     DuplicateFeature,
     FeatureCreate,
     FeatureRead,
-    GeoJsonImportCreate,
     GeneratorRunCreate,
-    JobRead,
+    GeoJsonImportCreate,
     HoleCreate,
     ImportResult,
-    DatasetPublishCreate,
-    DatasetVersionRead,
+    JobRead,
     RevisionCreate,
+    RevisionRead,
     WorkspaceCreate,
     WorkspaceRead,
 )
-from geoscalex.geometry.analysis import GeometryValidationError
-from geoscalex.datasets.io import list_versions, publish_dataset
 from geoscalex.generators import generator_registry
 from geoscalex.generators.registry import GeneratorDefinition
+from geoscalex.geometry.analysis import GeometryValidationError
 from geoscalex.storage import repository
 
 router = APIRouter()
@@ -128,6 +129,14 @@ async def feature(feature_id: UUID, session: DatabaseSession) -> FeatureRead:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@router.get("/features/{feature_id}/revisions", response_model=list[RevisionRead])
+async def revisions(feature_id: UUID, session: DatabaseSession) -> list[RevisionRead]:
+    try:
+        return await repository.list_revisions(session, feature_id)
+    except LookupError as error:
+        raise not_found(error) from error
+
+
 @router.post("/features/{feature_id}/revisions", response_model=FeatureRead, status_code=201)
 async def create_revision(
     feature_id: UUID, data: RevisionCreate, session: DatabaseSession
@@ -136,6 +145,22 @@ async def create_revision(
         return await repository.add_revision(session, feature_id, data)
     except LookupError as error:
         raise not_found(error) from error
+
+
+@router.post(
+    "/features/{feature_id}/revisions/{revision_id}/restore",
+    response_model=FeatureRead,
+    status_code=201,
+)
+async def restore_revision(
+    feature_id: UUID, revision_id: UUID, session: DatabaseSession
+) -> FeatureRead:
+    try:
+        return await repository.restore_revision(session, feature_id, revision_id)
+    except LookupError as error:
+        raise not_found(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("/features/{feature_id}/duplicate", response_model=FeatureRead, status_code=201)
@@ -165,10 +190,13 @@ async def restore_feature(feature_id: UUID, session: DatabaseSession) -> Feature
 
 
 @router.post("/annotations", response_model=AnnotationRead, status_code=201)
-async def create_annotation(
-    data: AnnotationCreate, session: DatabaseSession
-) -> AnnotationRead:
-    return await repository.create_annotation(session, data)
+async def create_annotation(data: AnnotationCreate, session: DatabaseSession) -> AnnotationRead:
+    try:
+        return await repository.create_annotation(session, data)
+    except LookupError as error:
+        raise not_found(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("/candidates", response_model=CandidateRead, status_code=201)
@@ -206,7 +234,9 @@ async def create_generator_run(data: GeneratorRunCreate, session: DatabaseSessio
     try:
         entry = generator_registry.get(data.generator_id)
         entry.parameters.model_validate(data.parameters)
-        return await repository.enqueue_generator_run(session, data, entry.definition.code_hash, entry.definition.version)
+        return await repository.enqueue_generator_run(
+            session, data, entry.definition.code_hash, entry.definition.version
+        )
     except LookupError as error:
         raise not_found(error) from error
     except ValueError as error:
@@ -243,7 +273,9 @@ async def import_geojson(data: GeoJsonImportCreate, session: DatabaseSession) ->
 
 
 @router.post("/datasets/{dataset_id}/versions", response_model=DatasetVersionRead, status_code=201)
-async def publish(dataset_id: UUID, data: DatasetPublishCreate, session: DatabaseSession) -> DatasetVersionRead:
+async def publish(
+    dataset_id: UUID, data: DatasetPublishCreate, session: DatabaseSession
+) -> DatasetVersionRead:
     try:
         return await publish_dataset(session, dataset_id, data.split_seed)
     except LookupError as error:

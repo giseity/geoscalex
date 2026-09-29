@@ -69,7 +69,9 @@ def _line(points: list[list[float]]) -> dict[str, Any]:
 
 def noisy_straight(parameters: BaseModel, rng: random.Random) -> dict[str, Any]:
     p = CurveParameters.model_validate(parameters)
-    return _line([[p.length * i / (p.samples - 1), rng.gauss(0, p.noise)] for i in range(p.samples)])
+    return _line(
+        [[p.length * i / (p.samples - 1), rng.gauss(0, p.noise)] for i in range(p.samples)]
+    )
 
 
 def smooth_curve(parameters: BaseModel, rng: random.Random) -> dict[str, Any]:
@@ -104,7 +106,10 @@ def meandering_river(parameters: BaseModel, rng: random.Random) -> dict[str, Any
 def zigzag(parameters: BaseModel, rng: random.Random) -> dict[str, Any]:
     p = ZigzagParameters.model_validate(parameters)
     return _line(
-        [[i * p.spacing, (p.amplitude if i % 2 else -p.amplitude) + rng.gauss(0, p.jitter)] for i in range(p.turns + 1)]
+        [
+            [i * p.spacing, (p.amplitude if i % 2 else -p.amplitude) + rng.gauss(0, p.jitter)]
+            for i in range(p.turns + 1)
+        ]
     )
 
 
@@ -131,7 +136,9 @@ def irregular_polygon(parameters: BaseModel, rng: random.Random) -> dict[str, An
         angle = math.tau * i / p.vertices
         modulation = 1 + p.irregularity * math.sin(p.lobes * angle + phase)
         modulation += rng.uniform(-p.irregularity * 0.12, p.irregularity * 0.12)
-        ring.append([p.radius * modulation * math.cos(angle), p.radius * modulation * math.sin(angle)])
+        ring.append(
+            [p.radius * modulation * math.cos(angle), p.radius * modulation * math.sin(angle)]
+        )
     ring.append(ring[0])
     return {"type": "Polygon", "coordinates": [ring]}
 
@@ -158,7 +165,15 @@ class GeneratorRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, RegistryEntry] = {}
 
-    def register(self, identifier: str, name: str, description: str, geometry_type: str, parameters: type[BaseModel], function: GeneratorFunction) -> None:
+    def register(
+        self,
+        identifier: str,
+        name: str,
+        description: str,
+        geometry_type: str,
+        parameters: type[BaseModel],
+        function: GeneratorFunction,
+    ) -> None:
         definition = GeneratorDefinition(
             id=identifier,
             name=name,
@@ -168,7 +183,9 @@ class GeneratorRegistry:
             parameter_schema=parameters.model_json_schema(),
             code_hash=hashlib.sha256(inspect.getsource(function).encode()).hexdigest(),
         )
-        self._entries[identifier] = RegistryEntry(definition=definition, parameters=parameters, generate=function)
+        self._entries[identifier] = RegistryEntry(
+            definition=definition, parameters=parameters, generate=function
+        )
 
     def definitions(self) -> list[GeneratorDefinition]:
         return [entry.definition for entry in self._entries.values()]
@@ -185,10 +202,59 @@ class GeneratorRegistry:
 
 
 generator_registry = GeneratorRegistry()
-generator_registry.register("noisy-straight", "Noisy straight", "Nearly straight digitized line.", "LineString", CurveParameters, noisy_straight)
-generator_registry.register("smooth-curve", "Smooth curve", "Broad smooth bend with sampling noise.", "LineString", CurveParameters, smooth_curve)
-generator_registry.register("meandering-river", "Meandering river", "Multiscale river-like oscillations.", "LineString", CurveParameters, meandering_river)
-generator_registry.register("zigzag", "Zigzag", "Repeated alternating direction changes.", "LineString", ZigzagParameters, zigzag)
-generator_registry.register("hairpin", "Hairpin", "A tight U-turn with approaches.", "LineString", HairpinParameters, hairpin)
-generator_registry.register("irregular-polygon", "Irregular polygon", "A closed lobe-modulated polygon.", "Polygon", PolygonParameters, irregular_polygon)
-generator_registry.register("polygon-with-holes", "Polygon with holes", "An irregular polygon with deterministic interior rings.", "Polygon", HoledPolygonParameters, polygon_with_holes)
+generator_registry.register(
+    "noisy-straight",
+    "Noisy straight",
+    "Nearly straight digitized line.",
+    "LineString",
+    CurveParameters,
+    noisy_straight,
+)
+generator_registry.register(
+    "smooth-curve",
+    "Smooth curve",
+    "Broad smooth bend with sampling noise.",
+    "LineString",
+    CurveParameters,
+    smooth_curve,
+)
+generator_registry.register(
+    "meandering-river",
+    "Meandering river",
+    "Multiscale river-like oscillations.",
+    "LineString",
+    CurveParameters,
+    meandering_river,
+)
+generator_registry.register(
+    "zigzag",
+    "Zigzag",
+    "Repeated alternating direction changes.",
+    "LineString",
+    ZigzagParameters,
+    zigzag,
+)
+generator_registry.register(
+    "hairpin",
+    "Hairpin",
+    "A tight U-turn with approaches.",
+    "LineString",
+    HairpinParameters,
+    hairpin,
+)
+generator_registry.register(
+    "irregular-polygon",
+    "Irregular polygon",
+    "A closed lobe-modulated polygon.",
+    "Polygon",
+    PolygonParameters,
+    irregular_polygon,
+)
+generator_registry.register(
+    "polygon-with-holes",
+    "Polygon with holes",
+    "An irregular polygon with deterministic interior rings.",
+    "Polygon",
+    HoledPolygonParameters,
+    polygon_with_holes,
+)

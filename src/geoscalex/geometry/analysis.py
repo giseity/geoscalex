@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,12 +32,12 @@ class GeometryAnalysis:
 def _finite_coordinates(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return math.isfinite(float(value))
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return bool(value) and all(_finite_coordinates(item) for item in value)
     return False
 
 
-def _consecutive_duplicates(coordinates: list[list[float]]) -> bool:
+def _consecutive_duplicates(coordinates: Sequence[Sequence[float]]) -> bool:
     return any(a == b for a, b in zip(coordinates, coordinates[1:], strict=False))
 
 
@@ -47,7 +48,7 @@ def validate_geometry(geojson: dict[str, Any]) -> GeometryAnalysis:
             f"Unsupported geometry type {geometry_type!r}; expected LineString or Polygon"
         )
     coordinates = geojson.get("coordinates")
-    if not isinstance(coordinates, list) or not _finite_coordinates(coordinates):
+    if not isinstance(coordinates, (list, tuple)) or not _finite_coordinates(coordinates):
         raise GeometryValidationError("Coordinates must be non-empty finite numeric arrays")
 
     if geometry_type == "LineString":
@@ -64,7 +65,9 @@ def validate_geometry(geojson: dict[str, Any]) -> GeometryAnalysis:
                     "Every polygon ring must be closed and contain at least four coordinates"
                 )
             if _consecutive_duplicates(ring[:-1]):
-                raise GeometryValidationError("Consecutive duplicate ring coordinates are not allowed")
+                raise GeometryValidationError(
+                    "Consecutive duplicate ring coordinates are not allowed"
+                )
 
     geometry = shape(geojson)
     if geometry.is_empty:
@@ -84,6 +87,7 @@ def validate_geometry(geojson: dict[str, Any]) -> GeometryAnalysis:
     else:
         raise GeometryValidationError("Geometry normalization produced an unsupported type")
 
+    min_x, min_y, max_x, max_y = geometry.bounds
     return GeometryAnalysis(
         geometry=normalized,
         geometry_type=geometry.geom_type,
@@ -93,7 +97,7 @@ def validate_geometry(geojson: dict[str, Any]) -> GeometryAnalysis:
         area=float(geometry.area),
         is_valid=True,
         validity_reason="Valid Geometry",
-        bounds=tuple(float(value) for value in geometry.bounds),
+        bounds=(float(min_x), float(min_y), float(max_x), float(max_y)),
     )
 
 

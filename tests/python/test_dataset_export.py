@@ -22,7 +22,9 @@ async def test_publish_dataset_writes_verified_parquet(tmp_path: Path) -> None:
     try:
         async with sessions() as session:
             workspace = await create_workspace(session, WorkspaceCreate(name="Research"))
-            dataset = await create_dataset(session, DatasetCreate(workspace_id=workspace.id, name="Curves"))
+            dataset = await create_dataset(
+                session, DatasetCreate(workspace_id=workspace.id, name="Curves")
+            )
             await create_feature(
                 session,
                 FeatureCreate(
@@ -32,8 +34,16 @@ async def test_publish_dataset_writes_verified_parquet(tmp_path: Path) -> None:
             )
             version = await publish_dataset(session, dataset.id, 42)
         parquet = Path(version.manifest_path).parent / "features.parquet"
+        export_dir = parquet.parent
+        assert (export_dir / "candidates.parquet").exists()
+        assert (export_dir / "annotations.parquet").exists()
         with duckdb.connect() as connection:
-            assert connection.execute("SELECT count(*) FROM read_parquet(?)", [str(parquet)]).fetchone()[0] == 1
+            assert (
+                connection.execute(
+                    "SELECT count(*) FROM read_parquet(?)", [str(parquet)]
+                ).fetchone()[0]
+                == 1
+            )
     finally:
         settings.data_dir = old_data_dir
         await engine.dispose()

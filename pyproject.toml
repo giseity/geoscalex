@@ -30,7 +30,8 @@ dev = [
   "mypy>=1.18",
   "pytest>=8.4",
   "pytest-asyncio>=1.2",
-  "ruff>=0.13"
+  "ruff>=0.13",
+  "types-shapely>=2.1"
 ]
 
 [dependency-groups]
@@ -39,7 +40,8 @@ dev = [
   "mypy>=1.18",
   "pytest>=8.4",
   "pytest-asyncio>=1.2",
-  "ruff>=0.13"
+  "ruff>=0.13",
+  "types-shapely>=2.1"
 ]
 
 [project.scripts]
@@ -65,3 +67,7 @@ python_version = "3.12"
 strict = true
 packages = ["geoscalex"]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
