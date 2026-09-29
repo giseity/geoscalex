@@ -31,7 +31,8 @@ only when training or running the purpose-built encoder:
 ```bash
 uv sync --extra ml
 uv run geoscalex-train .geoscalex/exports/<dataset-id>/v1 \
-  --output .geoscalex/checkpoints/remove-move-v1.pt
+  --output .geoscalex/checkpoints/remove-move-v1.pt \
+  --profile smoke
 uv run geoscalex-evaluate .geoscalex/exports/<dataset-id>/v1 \
   .geoscalex/checkpoints/remove-move-v1.pt \
   --output .geoscalex/reports/remove-move-v1.json
@@ -41,6 +42,16 @@ Set `GEOSCALEX_ENCODER_CHECKPOINT` to the checkpoint path and restart the API an
 `encoder-remove-move` option then appears in the same matched-budget comparison UI as the
 classical and DeepSeek methods. Training is CPU-first by default; `--device cuda` is available
 when the installed PyTorch build and hardware support it.
+
+Create and audit a deterministic synthetic pilot before training:
+
+```bash
+uv run geoscalex-pilot --count 1000 --output .geoscalex/pilot-v1.json
+uv run geoscalex-audit .geoscalex/exports/<dataset-id>/v1
+```
+
+The `smoke` model profile validates the pipeline on a CPU. Use `--profile standard` for the
+larger baseline encoder after the pilot has passed its audit.
 
 ## Checks
 

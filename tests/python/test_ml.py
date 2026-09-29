@@ -15,7 +15,7 @@ from geoscalex.ml.data import load_samples
 from geoscalex.ml.features import FEATURE_DIM, vertex_features
 from geoscalex.ml.inference import infer_geometry, load_checkpoint
 from geoscalex.ml.model import ModelConfig, RemoveMoveEncoder
-from geoscalex.ml.training import train
+from geoscalex.ml.training import MODEL_PROFILES, train
 from geoscalex.simplification.keep_move import normalize_for_model
 
 
@@ -83,7 +83,15 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     _export(export_dir)
     assert len(load_samples(export_dir, split="train")) == 1
     checkpoint = tmp_path / "checkpoints" / "encoder.pt"
-    report = train(export_dir, checkpoint, epochs=1, batch_size=1, seed=7)
+    report = train(
+        export_dir,
+        checkpoint,
+        epochs=1,
+        batch_size=1,
+        seed=7,
+        model_config=MODEL_PROFILES["smoke"],
+        model_profile="smoke",
+    )
     _, metadata = load_checkpoint(checkpoint)
     assert report["epochs_completed"] == 1
     assert metadata["train_samples"] == 1

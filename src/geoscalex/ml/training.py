@@ -14,6 +14,17 @@ import torch.nn.functional as functional
 from geoscalex.ml.data import TrainingSample, collate, load_samples
 from geoscalex.ml.model import ModelConfig, RemoveMoveEncoder
 
+MODEL_PROFILES = {
+    "smoke": ModelConfig(
+        hidden_dim=32,
+        layers=2,
+        heads=4,
+        feedforward_dim=128,
+        dropout=0.05,
+    ),
+    "standard": ModelConfig(),
+}
+
 
 def _batches(
     samples: list[TrainingSample], batch_size: int, *, shuffle: bool, seed: int
@@ -89,25 +100,39 @@ def train(
     batch_size: int = 16,
     seed: int = 4812,
     device: str = "cpu",
+    model_config: ModelConfig | None = None,
+    model_profile: str = "standard",
+    max_vertices: int = 512,
+    learning_rate: float = 1e-3,
+    patience: int = 5,
+    threads: int | None = None,
 ) -> dict[str, Any]:
+    if epochs < 1 or batch_size < 1 or max_vertices < 3 or patience < 1:
+        raise ValueError("epochs, batch_size, max_vertices, and patience must be positive")
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise ValueError("CUDA was requested but is not available in this PyTorch runtime")
+    if threads is not None:
+        if threads < 1:
+            raise ValueError("threads must be positive when provided")
+        torch.set_num_threads(threads)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    train_samples = load_samples(export_dir, split="train")
-    validation_samples = load_samples(export_dir, split="validation")
+    train_samples = load_samples(export_dir, split="train", max_vertices=max_vertices)
+    validation_samples = load_samples(export_dir, split="validation", max_vertices=max_vertices)
     if not train_samples:
         raise ValueError(f"No train samples found in {export_dir}")
     validation_fallback = not validation_samples
     if validation_fallback:
         validation_samples = train_samples
 
-    config = ModelConfig()
+    config = model_config or ModelConfig()
     model = RemoveMoveEncoder(config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     best_loss = float("inf")
     best_state: dict[str, torch.Tensor] | None = None
     history: list[dict[str, Any]] = []
-    remaining_patience = 5
+    remaining_patience = patience
     for epoch in range(1, epochs + 1):
         train_metrics = _epoch(
             model,
@@ -131,7 +156,7 @@ def train(
             best_state = {
                 name: tensor.detach().cpu().clone() for name, tensor in model.state_dict().items()
             }
-            remaining_patience = 5
+            remaining_patience = patience
         else:
             remaining_patience -= 1
             if remaining_patience == 0:
@@ -144,6 +169,12 @@ def train(
         "format_version": 1,
         "dataset_path": str(export_dir.resolve()),
         "seed": seed,
+        "model_profile": model_profile,
+        "max_vertices": max_vertices,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "device": device,
+        "torch_version": str(torch.__version__),
         "train_samples": len(train_samples),
         "validation_samples": len(validation_samples),
         "validation_fallback": validation_fallback,
@@ -169,6 +200,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--seed", type=int, default=4812)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--profile", choices=tuple(MODEL_PROFILES), default="standard")
+    parser.add_argument("--max-vertices", type=int, default=512)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--threads", type=int)
     arguments = parser.parse_args()
     report = train(
         arguments.export_dir,
@@ -177,6 +213,12 @@ def main() -> None:
         batch_size=arguments.batch_size,
         seed=arguments.seed,
         device=arguments.device,
+        model_config=MODEL_PROFILES[arguments.profile],
+        model_profile=arguments.profile,
+        max_vertices=arguments.max_vertices,
+        learning_rate=arguments.learning_rate,
+        patience=arguments.patience,
+        threads=arguments.threads,
     )
     print(json.dumps({key: value for key, value in report.items() if key != "history"}, indent=2))
 
