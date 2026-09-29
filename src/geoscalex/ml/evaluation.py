@@ -5,6 +5,7 @@ import json
 import math
 import statistics
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +13,13 @@ import numpy as np
 
 from geoscalex.geometry.analysis import comparison_metrics, validate_geometry
 from geoscalex.geometry.simplify import build_candidate
-from geoscalex.ml.data import TrainingSample, load_samples
+from geoscalex.ml.data import (
+    TrainingSample,
+    load_samples,
+    materialize_importance,
+    select_importance_indices,
+)
 from geoscalex.ml.inference import infer_geometry, load_checkpoint
-from geoscalex.simplification.keep_move import apply_keep_move, normalize_for_model
 
 
 def _mean(values: list[float]) -> float:
@@ -24,7 +29,7 @@ def _mean(values: list[float]) -> float:
 def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     latency = [float(row["latency_ms"]) for row in rows]
     polygon_rows = [row for row in rows if "intersection_over_union" in row]
-    return {
+    summary = {
         "candidate_count": len(rows),
         "validity_rate": _mean([float(row["is_valid"]) for row in rows]),
         "budget_satisfaction_rate": _mean([float(row["budget_satisfied"]) for row in rows]),
@@ -46,6 +51,12 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "median_latency_ms": float(np.quantile(latency, 0.5)) if latency else 0.0,
         "p95_latency_ms": float(np.quantile(latency, 0.95)) if latency else 0.0,
     }
+    for field in ("quality_teacher_topk_agreement", "consensus_teacher_topk_agreement"):
+        if any(field in row for row in rows):
+            summary[f"mean_{field}"] = _mean(
+                [float(row[field]) for row in rows if field in row]
+            )
+    return summary
 
 
 def _paired_summary(
@@ -91,28 +102,15 @@ def _paired_summary(
 
 
 def _teacher_candidate(
-    sample: TrainingSample, budget: int
+    sample: TrainingSample, budget: int, *, consensus: bool
 ) -> tuple[dict[str, Any], bool]:
     """Materialize the exact ranking target without asking the encoder to imitate it."""
-    normalized = normalize_for_model(sample.geometry)
-    scores = sample.importance.copy()
-    if normalized.geometry_type == "LineString":
-        protected_score = float(np.max(scores)) + 1.0
-        scores[0] = scores[-1] = protected_score
-    kept = sorted(np.argsort(-scores, kind="stable")[:budget].tolist())
-    try:
-        candidate, _ = apply_keep_move(
-            normalized,
-            kept,
-            [(0.0, 0.0)] * len(kept),
-            budget,
-        )
-        return candidate, False
-    except ValueError:
-        candidate, _, _ = build_candidate(
-            sample.geometry, "visvalingam-whyatt", budget=budget
-        )
-        return candidate, True
+    return materialize_importance(
+        sample.geometry,
+        sample.consensus_importance if consensus else sample.importance,
+        budget,
+        fallback_method=("visvalingam-whyatt" if consensus else sample.teacher_method),
+    )
 
 
 def _renamed_pair_summary(
@@ -163,6 +161,7 @@ def evaluate(
     encoder_cold_start_latency_ms = (time.perf_counter() - cold_start) * 1000
     measurements: dict[str, list[dict[str, Any]]] = {
         "encoder-remove-move": [],
+        "teacher-quality-oracle": [],
         "teacher-consensus-oracle": [],
         "douglas-peucker": [],
         "visvalingam-whyatt": [],
@@ -176,7 +175,7 @@ def evaluate(
         for ratio in ratios:
             budget = max(minimum, min(source_count, int(source_count * ratio + 0.5)))
             started = time.perf_counter()
-            candidate, _, _, diagnostics, _ = infer_geometry(
+            candidate, kept, _, diagnostics, _ = infer_geometry(
                 model, sample.geometry, budget, device=device
             )
             encoder_metrics = comparison_metrics(sample.geometry, candidate)
@@ -188,25 +187,46 @@ def evaluate(
             encoder_metrics["fallback_used"] = bool(diagnostics["fallback_used"])
             encoder_metrics["retention_ratio"] = ratio
             encoder_metrics["geometry_type"] = sample.geometry["type"]
+            quality_kept = set(
+                select_importance_indices(sample.geometry, sample.importance, budget)
+            )
+            consensus_kept = set(
+                select_importance_indices(
+                    sample.geometry, sample.consensus_importance, budget
+                )
+            )
+            encoder_kept = set(kept)
+            encoder_metrics["quality_teacher_topk_agreement"] = (
+                len(encoder_kept.intersection(quality_kept)) / budget
+            )
+            encoder_metrics["consensus_teacher_topk_agreement"] = (
+                len(encoder_kept.intersection(consensus_kept)) / budget
+            )
             encoder_metrics["absolute_normalized_length_delta"] = abs(
                 encoder_metrics["length_delta"]
             ) / max(source_analysis.length, 1e-9)
             measurements["encoder-remove-move"].append(encoder_metrics)
-            started = time.perf_counter()
-            teacher_candidate, teacher_fallback = _teacher_candidate(sample, budget)
-            teacher_metrics = comparison_metrics(sample.geometry, teacher_candidate)
-            teacher_metrics["normalized_hausdorff_distance"] = (
-                teacher_metrics["hausdorff_distance"] / diagonal
-            )
-            teacher_metrics["latency_ms"] = (time.perf_counter() - started) * 1000
-            teacher_metrics["budget_satisfied"] = teacher_metrics["vertex_count"] == budget
-            teacher_metrics["fallback_used"] = teacher_fallback
-            teacher_metrics["retention_ratio"] = ratio
-            teacher_metrics["geometry_type"] = sample.geometry["type"]
-            teacher_metrics["absolute_normalized_length_delta"] = abs(
-                teacher_metrics["length_delta"]
-            ) / max(source_analysis.length, 1e-9)
-            measurements["teacher-consensus-oracle"].append(teacher_metrics)
+            for oracle_name, consensus in (
+                ("teacher-quality-oracle", False),
+                ("teacher-consensus-oracle", True),
+            ):
+                started = time.perf_counter()
+                teacher_candidate, teacher_fallback = _teacher_candidate(
+                    sample, budget, consensus=consensus
+                )
+                teacher_metrics = comparison_metrics(sample.geometry, teacher_candidate)
+                teacher_metrics["normalized_hausdorff_distance"] = (
+                    teacher_metrics["hausdorff_distance"] / diagonal
+                )
+                teacher_metrics["latency_ms"] = (time.perf_counter() - started) * 1000
+                teacher_metrics["budget_satisfied"] = teacher_metrics["vertex_count"] == budget
+                teacher_metrics["fallback_used"] = teacher_fallback
+                teacher_metrics["retention_ratio"] = ratio
+                teacher_metrics["geometry_type"] = sample.geometry["type"]
+                teacher_metrics["absolute_normalized_length_delta"] = abs(
+                    teacher_metrics["length_delta"]
+                ) / max(source_analysis.length, 1e-9)
+                measurements[oracle_name].append(teacher_metrics)
             for method in ("douglas-peucker", "visvalingam-whyatt"):
                 started = time.perf_counter()
                 classical, _, _ = build_candidate(sample.geometry, method, budget=budget)
@@ -252,6 +272,7 @@ def evaluate(
     encoder_rows = measurements["encoder-remove-move"]
     paired_comparisons: dict[str, Any] = {}
     for baseline_name in (
+        "teacher-quality-oracle",
         "teacher-consensus-oracle",
         "douglas-peucker",
         "visvalingam-whyatt",
@@ -283,44 +304,54 @@ def evaluate(
                 if any(str(row["geometry_type"]) == geometry_type for row in encoder_rows)
             },
         }
-    teacher_rows = measurements["teacher-consensus-oracle"]
     teacher_comparisons: dict[str, Any] = {}
-    for baseline_name in ("douglas-peucker", "visvalingam-whyatt"):
-        baseline_rows = measurements[baseline_name]
-        teacher_comparisons[baseline_name] = {
-            **_renamed_pair_summary(
-                teacher_rows,
-                baseline_rows,
-                candidate_name="teacher",
-            ),
-            "by_retention_ratio": {
-                str(ratio): _renamed_pair_summary(
-                    [row for row in teacher_rows if float(row["retention_ratio"]) == ratio],
-                    [row for row in baseline_rows if float(row["retention_ratio"]) == ratio],
+    for oracle_name in ("teacher-quality-oracle", "teacher-consensus-oracle"):
+        teacher_rows = measurements[oracle_name]
+        teacher_comparisons[oracle_name] = {}
+        for baseline_name in ("douglas-peucker", "visvalingam-whyatt"):
+            baseline_rows = measurements[baseline_name]
+            teacher_comparisons[oracle_name][baseline_name] = {
+                **_renamed_pair_summary(
+                    teacher_rows,
+                    baseline_rows,
                     candidate_name="teacher",
-                )
-                for ratio in ratios
-            },
-            "by_geometry_type": {
-                geometry_type: _renamed_pair_summary(
-                    [
-                        row
-                        for row in teacher_rows
-                        if str(row["geometry_type"]) == geometry_type
-                    ],
-                    [
-                        row
-                        for row in baseline_rows
-                        if str(row["geometry_type"]) == geometry_type
-                    ],
-                    candidate_name="teacher",
-                )
-                for geometry_type in ("LineString", "Polygon")
-                if any(str(row["geometry_type"]) == geometry_type for row in teacher_rows)
-            },
-        }
+                ),
+                "by_retention_ratio": {
+                    str(ratio): _renamed_pair_summary(
+                        [
+                            row
+                            for row in teacher_rows
+                            if float(row["retention_ratio"]) == ratio
+                        ],
+                        [
+                            row
+                            for row in baseline_rows
+                            if float(row["retention_ratio"]) == ratio
+                        ],
+                        candidate_name="teacher",
+                    )
+                    for ratio in ratios
+                },
+                "by_geometry_type": {
+                    geometry_type: _renamed_pair_summary(
+                        [
+                            row
+                            for row in teacher_rows
+                            if str(row["geometry_type"]) == geometry_type
+                        ],
+                        [
+                            row
+                            for row in baseline_rows
+                            if str(row["geometry_type"]) == geometry_type
+                        ],
+                        candidate_name="teacher",
+                    )
+                    for geometry_type in ("LineString", "Polygon")
+                    if any(str(row["geometry_type"]) == geometry_type for row in teacher_rows)
+                },
+            }
     return {
-        "format_version": 1,
+        "format_version": 2,
         "dataset_path": str(export_dir.resolve()),
         "checkpoint": str(checkpoint.resolve()),
         "checkpoint_metadata": metadata,
@@ -330,8 +361,11 @@ def evaluate(
         "budgets": list(ratios),
         "encoder_cold_start_latency_ms": encoder_cold_start_latency_ms,
         "encoder_fallback_rate": methods["encoder-remove-move"]["fallback_rate"],
+        "teacher_selection_counts": dict(
+            sorted(Counter(sample.teacher_method for sample in samples).items())
+        ),
         "teacher_oracle_note": (
-            "Teacher latency measures reconstruction from precomputed labels and is not an "
+            "Teacher latencies measure reconstruction from precomputed labels and are not an "
             "inference benchmark."
         ),
         "methods": methods,

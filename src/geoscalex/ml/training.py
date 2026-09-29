@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as functional
 
-from geoscalex.ml.data import TrainingSample, collate, load_samples
+from geoscalex.ml.data import TEACHER_RATIOS, TrainingSample, collate, load_samples
 from geoscalex.ml.model import ModelConfig, RemoveMoveEncoder
 
 MODEL_PROFILES = {
@@ -24,6 +25,7 @@ MODEL_PROFILES = {
     ),
     "standard": ModelConfig(),
 }
+TRAINING_OBJECTIVES = ("rank-regression", "hybrid-ranking")
 
 
 def _batches(
@@ -37,14 +39,62 @@ def _batches(
 
 
 def _losses(
-    model: RemoveMoveEncoder, batch: dict[str, torch.Tensor], device: str
+    model: RemoveMoveEncoder,
+    batch: dict[str, torch.Tensor],
+    device: str,
+    objective: str,
 ) -> tuple[torch.Tensor, dict[str, float]]:
+    if objective not in TRAINING_OBJECTIVES:
+        raise ValueError(f"Unknown training objective: {objective}")
     tensors = {name: value.to(device) for name, value in batch.items()}
     importance, movement = model(
         tensors["features"], tensors["padding_mask"], tensors["budget_ratio"]
     )
     valid = ~tensors["padding_mask"]
-    importance_loss = functional.smooth_l1_loss(importance[valid], tensors["importance"][valid])
+    listwise_losses: list[torch.Tensor] = []
+    topk_losses: list[torch.Tensor] = []
+    boundary_losses: list[torch.Tensor] = []
+    for index in range(importance.shape[0]):
+        prediction = importance[index][valid[index]]
+        target = tensors["importance"][index][valid[index]]
+        retained = tensors["keep_mask"][index][valid[index]]
+        target_distribution = functional.softmax(target / 0.1, dim=0)
+        listwise_losses.append(
+            -(target_distribution * functional.log_softmax(prediction, dim=0)).sum()
+        )
+        retained_count = int(retained.sum().item())
+        removed_count = len(retained) - retained_count
+        weights = torch.ones_like(prediction)
+        if retained_count and removed_count:
+            weights[retained] = len(retained) / (2.0 * retained_count)
+            weights[~retained] = len(retained) / (2.0 * removed_count)
+        topk_losses.append(
+            functional.binary_cross_entropy_with_logits(
+                prediction,
+                retained.to(dtype=prediction.dtype),
+                weight=weights,
+            )
+        )
+        if retained_count and removed_count:
+            boundary_losses.append(
+                functional.softplus(prediction[~retained].max() - prediction[retained].min())
+            )
+        else:
+            boundary_losses.append(prediction.sum() * 0.0)
+    listwise_loss = torch.stack(listwise_losses).mean()
+    topk_loss = torch.stack(topk_losses).mean()
+    boundary_loss = torch.stack(boundary_losses).mean()
+    regression_loss = functional.smooth_l1_loss(
+        importance[valid], tensors["importance"][valid]
+    )
+    importance_loss = (
+        regression_loss
+        if objective == "rank-regression"
+        else regression_loss
+        + 0.005 * listwise_loss
+        + 0.05 * topk_loss
+        + 0.005 * boundary_loss
+    )
     movement_mask = tensors["movement_mask"] & valid
     if movement_mask.any():
         movement_loss = functional.smooth_l1_loss(
@@ -56,6 +106,10 @@ def _losses(
     total = importance_loss + 2.0 * movement_loss + 0.01 * displacement_penalty
     return total, {
         "importance": float(importance_loss.detach().cpu()),
+        "regression": float(regression_loss.detach().cpu()),
+        "listwise": float(listwise_loss.detach().cpu()),
+        "topk": float(topk_loss.detach().cpu()),
+        "boundary": float(boundary_loss.detach().cpu()),
         "movement": float(movement_loss.detach().cpu()),
         "displacement_penalty": float(displacement_penalty.detach().cpu()),
         "total": float(total.detach().cpu()),
@@ -70,21 +124,28 @@ def _epoch(
     device: str,
     optimizer: torch.optim.Optimizer | None,
     seed: int,
+    objective: str,
 ) -> dict[str, float]:
     model.train(optimizer is not None)
     totals: dict[str, float] = {}
     seen = 0
-    for sample_batch in _batches(samples, batch_size, shuffle=optimizer is not None, seed=seed):
-        batch = collate(sample_batch)
+    for batch_index, sample_batch in enumerate(
+        _batches(samples, batch_size, shuffle=optimizer is not None, seed=seed)
+    ):
+        importance_ratios = [
+            TEACHER_RATIOS[(seed + batch_index * batch_size + index) % len(TEACHER_RATIOS)]
+            for index in range(len(sample_batch))
+        ]
+        batch = collate(sample_batch, importance_ratios=importance_ratios)
         if optimizer is not None:
             optimizer.zero_grad(set_to_none=True)
-            loss, values = _losses(model, batch, device)
+            loss, values = _losses(model, batch, device, objective)
             loss.backward()  # type: ignore[no-untyped-call]
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
         else:
             with torch.no_grad():
-                _, values = _losses(model, batch, device)
+                _, values = _losses(model, batch, device, objective)
         count = len(sample_batch)
         seen += count
         for name, value in values.items():
@@ -106,11 +167,14 @@ def train(
     learning_rate: float = 1e-3,
     patience: int = 5,
     threads: int | None = None,
+    objective: str = "rank-regression",
 ) -> dict[str, Any]:
     if epochs < 1 or batch_size < 1 or max_vertices < 3 or patience < 1:
         raise ValueError("epochs, batch_size, max_vertices, and patience must be positive")
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA was requested but is not available in this PyTorch runtime")
+    if objective not in TRAINING_OBJECTIVES:
+        raise ValueError(f"Unknown training objective: {objective}")
     if threads is not None:
         if threads < 1:
             raise ValueError("threads must be positive when provided")
@@ -142,6 +206,7 @@ def train(
             device=device,
             optimizer=optimizer,
             seed=seed + epoch,
+            objective=objective,
         )
         validation_metrics = _epoch(
             model,
@@ -150,6 +215,7 @@ def train(
             device=device,
             optimizer=None,
             seed=seed,
+            objective=objective,
         )
         history.append({"epoch": epoch, "train": train_metrics, "validation": validation_metrics})
         if validation_metrics["total"] < best_loss - 1e-6:
@@ -185,6 +251,11 @@ def train(
         "train_samples": len(train_samples),
         "validation_samples": len(validation_samples),
         "validation_fallback": validation_fallback,
+        "training_objective": objective,
+        "teacher_selection_counts": dict(
+            sorted(Counter(sample.teacher_method for sample in train_samples).items())
+        ),
+        "teacher_ratios": list(TEACHER_RATIOS),
         "best_validation_loss": best_loss,
         "best_epoch": best_epoch,
         "epochs_completed": len(history),
@@ -213,6 +284,7 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--threads", type=int)
+    parser.add_argument("--objective", choices=TRAINING_OBJECTIVES, default="rank-regression")
     arguments = parser.parse_args()
     report = train(
         arguments.export_dir,
@@ -227,6 +299,7 @@ def main() -> None:
         learning_rate=arguments.learning_rate,
         patience=arguments.patience,
         threads=arguments.threads,
+        objective=arguments.objective,
     )
     print(json.dumps({key: value for key, value in report.items() if key != "history"}, indent=2))
 

@@ -11,7 +11,7 @@ from typing import Any
 
 from geoscalex.datasets.audit import audit_export
 from geoscalex.ml.evaluation import evaluate
-from geoscalex.ml.training import MODEL_PROFILES, train
+from geoscalex.ml.training import MODEL_PROFILES, TRAINING_OBJECTIVES, train
 
 
 def _checksum(path: Path) -> str:
@@ -33,6 +33,7 @@ def run_experiment(
     device: str = "cpu",
     threads: int | None = None,
     ratios: tuple[float, ...] = (0.1, 0.25, 0.5, 0.75),
+    objective: str = "rank-regression",
 ) -> dict[str, Any]:
     if profile not in MODEL_PROFILES:
         raise ValueError(f"Unknown model profile: {profile}")
@@ -57,6 +58,7 @@ def run_experiment(
         model_config=MODEL_PROFILES[profile],
         model_profile=profile,
         threads=threads,
+        objective=objective,
     )
     training_duration_seconds = time.perf_counter() - training_started
     evaluation_started = time.perf_counter()
@@ -74,7 +76,7 @@ def run_experiment(
     )
     manifest_path = export_dir / "manifest.json"
     report = {
-        "experiment_version": 1,
+        "experiment_version": 2,
         "experiment_id": output_dir.name,
         "dataset_manifest": str(manifest_path),
         "dataset_manifest_sha256": _checksum(manifest_path),
@@ -84,6 +86,7 @@ def run_experiment(
         "seed": seed,
         "device": device,
         "threads": threads,
+        "objective": objective,
         "runtime": {
             "python_version": platform.python_version(),
             "platform": platform.platform(),
@@ -105,6 +108,7 @@ def run_experiment(
             "sample_count": evaluation["sample_count"],
             "encoder_cold_start_latency_ms": evaluation["encoder_cold_start_latency_ms"],
             "encoder_fallback_rate": evaluation["encoder_fallback_rate"],
+            "teacher_selection_counts": evaluation["teacher_selection_counts"],
             "teacher_oracle_note": evaluation["teacher_oracle_note"],
             "methods": evaluation["methods"],
             "paired_comparisons": evaluation["paired_comparisons"],
@@ -129,6 +133,7 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threads", type=int)
     parser.add_argument("--ratios", default="0.1,0.25,0.5,0.75")
+    parser.add_argument("--objective", choices=TRAINING_OBJECTIVES, default="rank-regression")
     arguments = parser.parse_args()
     ratios = tuple(float(value.strip()) for value in arguments.ratios.split(",") if value.strip())
     report = run_experiment(
@@ -141,6 +146,7 @@ def main() -> None:
         device=arguments.device,
         threads=arguments.threads,
         ratios=ratios,
+        objective=arguments.objective,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
 

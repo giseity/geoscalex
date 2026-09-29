@@ -49,18 +49,23 @@ def vertex_features(geometry: NormalizedGeometry) -> NDArray[np.float32]:
     return np.asarray(rows, dtype=np.float32)
 
 
+def rank_importance(
+    values: list[float | None], count: int, *, protected_value: float = 1.0
+) -> NDArray[np.float32]:
+    trimmed = values[:count]
+    finite = np.asarray([float(value or 0.0) for value in trimmed], dtype=np.float64)
+    order = np.argsort(np.argsort(finite, kind="stable"), kind="stable")
+    ranked = (order.astype(np.float32) / max(count - 1, 1)).astype(np.float32)
+    for index, value in enumerate(trimmed):
+        if value is None:
+            ranked[index] = protected_value
+    return ranked
+
+
 def consensus_importance(
     dp_scores: list[float | None], vw_scores: list[float | None], count: int
 ) -> NDArray[np.float32]:
-    def ranks(values: list[float | None]) -> NDArray[np.float32]:
-        trimmed = values[:count]
-        finite = np.asarray([float(value or 0.0) for value in trimmed], dtype=np.float64)
-        order = np.argsort(np.argsort(finite, kind="stable"), kind="stable")
-        ranked = (order.astype(np.float32) / max(count - 1, 1)).astype(np.float32)
-        for index, value in enumerate(trimmed):
-            if value is None:
-                ranked[index] = 1.0
-        return ranked
-
-    consensus = ((ranks(dp_scores) + ranks(vw_scores)) / 2).astype(np.float32)
+    dp_ranks = rank_importance(dp_scores, count)
+    vw_ranks = rank_importance(vw_scores, count)
+    consensus = ((dp_ranks + vw_ranks) / 2).astype(np.float32)
     return consensus

@@ -13,7 +13,7 @@ from shapely.geometry import shape
 torch = pytest.importorskip("torch")
 
 from geoscalex.geometry.analysis import validate_geometry
-from geoscalex.ml.data import load_samples
+from geoscalex.ml.data import collate, load_samples
 from geoscalex.ml.evaluation import evaluate
 from geoscalex.ml.experiment import run_experiment
 from geoscalex.ml.features import FEATURE_DIM, vertex_features
@@ -106,6 +106,13 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     export_dir = tmp_path / "export"
     _export(export_dir)
     assert len(load_samples(export_dir, split="train")) == 1
+    sample = load_samples(export_dir, split="train")[0]
+    assert sample.teacher_method == "douglas-peucker"
+    assert sample.dp_importance.tolist() == sample.vw_importance.tolist()
+    assert sample.consensus_importance[0] == 1.0
+    assert sample.importance[0] == pytest.approx(1.1)
+    batch = collate([sample], importance_ratios=[0.5])
+    assert int(batch["keep_mask"].sum()) == 3
     checkpoint = tmp_path / "checkpoints" / "encoder.pt"
     report = train(
         export_dir,
@@ -119,6 +126,7 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     _, metadata = load_checkpoint(checkpoint)
     assert report["epochs_completed"] == 1
     assert report["best_epoch"] == 1
+    assert report["training_objective"] == "rank-regression"
     assert metadata["train_samples"] == 1
     assert metadata["torch_num_threads"] >= 1
     assert metadata["trainable_parameters"] > 0
@@ -127,6 +135,12 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     assert evaluation["budgets"] == [0.5]
     assert evaluation["encoder_cold_start_latency_ms"] >= 0
     assert evaluation["methods"]["encoder-remove-move"]["candidate_count"] == 1
+    assert (
+        evaluation["methods"]["encoder-remove-move"]
+        ["mean_quality_teacher_topk_agreement"]
+        >= 0
+    )
+    assert evaluation["methods"]["teacher-quality-oracle"]["candidate_count"] == 1
     assert evaluation["methods"]["teacher-consensus-oracle"]["candidate_count"] == 1
     assert set(evaluation["methods"]["encoder-remove-move"]["by_geometry_type"]) == {
         "LineString"
@@ -136,7 +150,12 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     assert (
         evaluation["paired_comparisons"]["teacher-consensus-oracle"]["pair_count"] == 1
     )
-    assert evaluation["teacher_comparisons"]["douglas-peucker"]["pair_count"] == 1
+    assert (
+        evaluation["teacher_comparisons"]["teacher-quality-oracle"]
+        ["douglas-peucker"]["pair_count"]
+        == 1
+    )
+    assert evaluation["teacher_selection_counts"] == {"douglas-peucker": 1}
     experiment = run_experiment(
         export_dir,
         tmp_path / "experiment",
@@ -148,5 +167,6 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     assert experiment["profile"] == "smoke"
     assert experiment["training_duration_seconds"] >= 0
     assert experiment["evaluation_duration_seconds"] >= 0
+    assert experiment["experiment_version"] == 2
     assert experiment["runtime"]["python_version"]
     assert Path(experiment["checkpoint"]).exists()

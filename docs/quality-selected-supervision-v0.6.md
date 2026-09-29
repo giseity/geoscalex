@@ -18,11 +18,17 @@ different vertex ordering for every viewport or budget.
 
 ## Training objective
 
-Smooth L1 rank regression is replaced by three complementary terms:
+The milestone evaluates rank regression as a control and a hybrid objective with three additional
+terms:
 
 - listwise cross-entropy preserves the complete teacher ordering;
 - balanced top-k classification teaches retained versus removed vertices at sampled budgets;
 - a boundary-ranking term separates the weakest retained score from the strongest removed score.
+
+The hybrid keeps Smooth L1 regression as its anchor and adds the three ranking terms at lower
+weights. It remains an explicit ablation; rank regression is the default because the first matched
+run produced slightly better geometry. Experiment reports name the selected objective so a loss
+change cannot be confused with a teacher change.
 
 Each geometry is exposed to different deterministic budget ratios across epochs. Human-approved
 movement examples retain their reviewed budget so their displacement supervision remains aligned.
@@ -36,6 +42,7 @@ Reports materialize both teacher targets without encoder prediction:
 - `teacher-consensus-oracle` preserves the v0.5 averaged-rank reference.
 
 The report records teacher selection counts and paired comparisons against both classical methods.
+A top-k agreement metric measures how closely encoder selections match each oracle at every budget.
 A larger encoder profile remains gated on the small model showing that it can approach the stronger
 oracle. Teacher reconstruction latency is not treated as an inference benchmark.
 
