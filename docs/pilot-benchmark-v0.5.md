@@ -49,8 +49,9 @@ teacher-label failures produce a non-zero CLI exit.
 ## First experiment
 
 The first experiment uses a small CPU profile to prove the runtime on the development machine.
-Subsequent runs compare at least a tiny and standard encoder profile. Reports must keep neural
-fallback separate from neural success.
+Reports must keep neural fallback separate from neural success and must materialize the teacher
+ranking directly as an oracle. A standard encoder comparison is gated on that oracle being a
+credible target; scaling a model cannot repair a teacher that underperforms its source baselines.
 
 The first model is evaluated only as teacher imitation. A superiority claim requires stronger
 production baselines, real held-out GIS sources, complete quality-compression curves, and human or

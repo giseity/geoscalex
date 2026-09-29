@@ -79,7 +79,7 @@ def _epoch(
         if optimizer is not None:
             optimizer.zero_grad(set_to_none=True)
             loss, values = _losses(model, batch, device)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
         else:
@@ -130,6 +130,7 @@ def train(
     model = RemoveMoveEncoder(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     best_loss = float("inf")
+    best_epoch = 0
     best_state: dict[str, torch.Tensor] | None = None
     history: list[dict[str, Any]] = []
     remaining_patience = patience
@@ -153,6 +154,7 @@ def train(
         history.append({"epoch": epoch, "train": train_metrics, "validation": validation_metrics})
         if validation_metrics["total"] < best_loss - 1e-6:
             best_loss = validation_metrics["total"]
+            best_epoch = epoch
             best_state = {
                 name: tensor.detach().cpu().clone() for name, tensor in model.state_dict().items()
             }
@@ -174,11 +176,17 @@ def train(
         "learning_rate": learning_rate,
         "batch_size": batch_size,
         "device": device,
+        "requested_threads": threads,
+        "torch_num_threads": torch.get_num_threads(),
         "torch_version": str(torch.__version__),
+        "trainable_parameters": sum(
+            parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+        ),
         "train_samples": len(train_samples),
         "validation_samples": len(validation_samples),
         "validation_fallback": validation_fallback,
         "best_validation_loss": best_loss,
+        "best_epoch": best_epoch,
         "epochs_completed": len(history),
     }
     torch.save(

@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import platform
+import time
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +46,7 @@ def run_experiment(
         raise ValueError(f"Dataset audit failed; see {audit_path}")
 
     checkpoint = output_dir / "checkpoint.pt"
+    training_started = time.perf_counter()
     training = train(
         export_dir,
         checkpoint,
@@ -54,6 +58,8 @@ def run_experiment(
         model_profile=profile,
         threads=threads,
     )
+    training_duration_seconds = time.perf_counter() - training_started
+    evaluation_started = time.perf_counter()
     evaluation = evaluate(
         export_dir,
         checkpoint,
@@ -61,6 +67,7 @@ def run_experiment(
         device=device,
         ratios=ratios,
     )
+    evaluation_duration_seconds = time.perf_counter() - evaluation_started
     evaluation_path = output_dir / "evaluation.json"
     evaluation_path.write_text(
         json.dumps(evaluation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -77,7 +84,16 @@ def run_experiment(
         "seed": seed,
         "device": device,
         "threads": threads,
+        "runtime": {
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor() or None,
+            "logical_cpu_count": os.cpu_count(),
+        },
         "ratios": list(ratios),
+        "training_duration_seconds": training_duration_seconds,
+        "evaluation_duration_seconds": evaluation_duration_seconds,
         "checkpoint": str(checkpoint),
         "checkpoint_sha256": _checksum(checkpoint),
         "audit": str(audit_path),
@@ -87,8 +103,12 @@ def run_experiment(
         "evaluation_summary": {
             "split": evaluation["split"],
             "sample_count": evaluation["sample_count"],
+            "encoder_cold_start_latency_ms": evaluation["encoder_cold_start_latency_ms"],
             "encoder_fallback_rate": evaluation["encoder_fallback_rate"],
+            "teacher_oracle_note": evaluation["teacher_oracle_note"],
             "methods": evaluation["methods"],
+            "paired_comparisons": evaluation["paired_comparisons"],
+            "teacher_comparisons": evaluation["teacher_comparisons"],
         },
     }
     report_path = output_dir / "experiment.json"

@@ -118,11 +118,25 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     )
     _, metadata = load_checkpoint(checkpoint)
     assert report["epochs_completed"] == 1
+    assert report["best_epoch"] == 1
     assert metadata["train_samples"] == 1
+    assert metadata["torch_num_threads"] >= 1
+    assert metadata["trainable_parameters"] > 0
     assert checkpoint.with_suffix(".pt.json").exists()
     evaluation = evaluate(export_dir, checkpoint, split="train", ratios=(0.5,))
     assert evaluation["budgets"] == [0.5]
+    assert evaluation["encoder_cold_start_latency_ms"] >= 0
     assert evaluation["methods"]["encoder-remove-move"]["candidate_count"] == 1
+    assert evaluation["methods"]["teacher-consensus-oracle"]["candidate_count"] == 1
+    assert set(evaluation["methods"]["encoder-remove-move"]["by_geometry_type"]) == {
+        "LineString"
+    }
+    assert evaluation["teacher_oracle_note"]
+    assert evaluation["paired_comparisons"]["douglas-peucker"]["pair_count"] == 1
+    assert (
+        evaluation["paired_comparisons"]["teacher-consensus-oracle"]["pair_count"] == 1
+    )
+    assert evaluation["teacher_comparisons"]["douglas-peucker"]["pair_count"] == 1
     experiment = run_experiment(
         export_dir,
         tmp_path / "experiment",
@@ -132,4 +146,7 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
         ratios=(0.5,),
     )
     assert experiment["profile"] == "smoke"
+    assert experiment["training_duration_seconds"] >= 0
+    assert experiment["evaluation_duration_seconds"] >= 0
+    assert experiment["runtime"]["python_version"]
     assert Path(experiment["checkpoint"]).exists()
