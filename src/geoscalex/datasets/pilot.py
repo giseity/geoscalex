@@ -6,6 +6,7 @@ import json
 import math
 import random
 import sys
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,12 +123,27 @@ def _covered_split_seed(
 ) -> int:
     required = {"train", "validation", "test"}
     families = set(groups.values())
+    target_ratios = {"train": 0.8, "validation": 0.1, "test": 0.1}
+    balance_tolerance = max(0.03, 1 / len(groups))
+    best_covered: tuple[float, int] | None = None
     for seed in range(requested_seed, requested_seed + maximum_attempts):
         observed: dict[str, set[str]] = {family: set() for family in families}
+        counts: Counter[str] = Counter()
         for group, family in groups.items():
-            observed[family].add(assign_split(group, seed))
-        if all(splits == required for splits in observed.values()):
+            split = assign_split(group, seed)
+            observed[family].add(split)
+            counts[split] += 1
+        if not all(splits == required for splits in observed.values()):
+            continue
+        maximum_error = max(
+            abs(counts[split] / len(groups) - target) for split, target in target_ratios.items()
+        )
+        if best_covered is None or maximum_error < best_covered[0]:
+            best_covered = (maximum_error, seed)
+        if maximum_error <= balance_tolerance:
             return seed
+    if best_covered is not None:
+        return best_covered[1]
     raise RuntimeError(
         f"Could not find a family-covered split seed in {maximum_attempts} attempts; "
         "decrease group_size or allow incomplete family splits"

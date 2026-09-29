@@ -1,5 +1,6 @@
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 
 import duckdb
@@ -164,6 +165,10 @@ def test_pilot_split_seed_covers_every_generator_family() -> None:
             for group, group_family in groups.items()
             if group_family == family
         } == {"train", "validation", "test"}
+    split_counts = Counter(assign_split(group, seed) for group in groups)
+    assert split_counts["train"] / len(groups) == pytest.approx(0.8, abs=0.03)
+    assert split_counts["validation"] / len(groups) == pytest.approx(0.1, abs=0.03)
+    assert split_counts["test"] / len(groups) == pytest.approx(0.1, abs=0.03)
 
 
 @pytest.mark.asyncio
