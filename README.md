@@ -52,6 +52,8 @@ uv run geoscalex-pilot --count 1000 --output .geoscalex/pilot-v1.json
 uv run geoscalex-audit .geoscalex/exports/<dataset-id>/v1
 uv run geoscalex-experiment .geoscalex/exports/<dataset-id>/v1 \
   .geoscalex/experiments/pilot-smoke-v1 --profile smoke --epochs 10
+uv run geoscalex-review-batch <dataset-id> \
+  .geoscalex/checkpoints/remove-move-v1.pt --max-targets 20 --create
 ```
 
 The `smoke` model profile validates the pipeline on a CPU. Use `--profile standard` for the
@@ -74,5 +76,6 @@ See [the Dataset Lab architecture](docs/dataset-lab-v0.1.md), the
 [quality-selected supervision v0.6 contract](docs/quality-selected-supervision-v0.6.md), the
 [quality-selected supervision findings](docs/pilot-findings-v0.6.md), the
 [real-data pilot v0.7 contract](docs/real-data-pilot-v0.7.md), the
+[real-data pilot findings](docs/pilot-findings-v0.7.md), the
 [real-data source shortlist](docs/real-data-sources-v0.5.md), and the
 [research proposal](adaptive-neural-gis-generalization.md).

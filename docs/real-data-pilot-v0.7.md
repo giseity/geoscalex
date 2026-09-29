@@ -60,9 +60,9 @@ decide whether a dataset is legally suitable for training.
 
 ## Implementation batches
 
-1. Specification.
-2. Provenance-rich deterministic importer and API tests.
-3. Import UI controls and rejection/provenance summary.
-4. Uncertainty-prioritized contextual review batches.
-5. Cutoff-weighted training objective and focused tests.
-6. First held-out North American import, audit, benchmark, and findings.
+1. Specification. Complete.
+2. Provenance-rich deterministic importer and API tests. Complete.
+3. Import UI controls and rejection/provenance summary. Complete.
+4. Uncertainty-prioritized contextual review batches. Complete.
+5. Cutoff-weighted training objective and focused tests. Complete.
+6. First held-out North American import, audit, benchmark, and findings. Complete.
