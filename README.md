@@ -32,5 +32,6 @@ pnpm build
 ```
 
 See [the Dataset Lab architecture](docs/dataset-lab-v0.1.md), the
-[contextual scenes v0.2 contract](docs/contextual-scenes-v0.2.md), and the
+[contextual scenes v0.2 contract](docs/contextual-scenes-v0.2.md), the
+[automated scene extraction v0.3 contract](docs/automated-scene-extraction-v0.3.md), and the
 [research proposal](adaptive-neural-gis-generalization.md).
