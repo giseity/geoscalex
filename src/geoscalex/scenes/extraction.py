@@ -179,13 +179,26 @@ async def _load_features(
             .order_by(models.Feature.id)
         )
     ).all()
+    revision_ids = [
+        record.current_revision_id
+        for record in records
+        if record.current_revision_id is not None
+    ]
+    revisions = (
+        await session.scalars(
+            select(models.GeometryRevision).where(
+                models.GeometryRevision.id.in_(revision_ids)
+            )
+        )
+    ).all()
+    revisions_by_id = {revision.id: revision for revision in revisions}
     features: list[ExtractionFeature] = []
     incompatible = 0
     for record in records:
         if record.current_revision_id is None:
             incompatible += 1
             continue
-        revision = await session.get(models.GeometryRevision, record.current_revision_id)
+        revision = revisions_by_id.get(record.current_revision_id)
         if revision is None:
             incompatible += 1
             continue
