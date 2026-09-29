@@ -39,21 +39,40 @@ type GeometryStageProps = {
   original: Geometry
   left?: Geometry
   right?: Geometry
+  context?: ContextGeometry[]
   mode: "swipe" | "overlay"
   swipe: number
   className?: string
+  comparisonLabels?: boolean
+}
+
+export type ContextGeometry = {
+  geometry: Geometry
+  role: "sibling" | "parent" | "child" | "background" | "obstacle"
+  importance: number
+  style?: Record<string, unknown>
+}
+
+const roleColors: Record<ContextGeometry["role"], string> = {
+  sibling: "#6f8f88",
+  parent: "#76578f",
+  child: "#5084a5",
+  background: "#9a9b94",
+  obstacle: "#b45f48",
 }
 
 export function GeometryStage({
   original,
   left,
   right,
+  context = [],
   mode,
   swipe,
   className,
+  comparisonLabels = true,
 }: GeometryStageProps) {
   const clipId = useId().replaceAll(":", "")
-  const projection = projectionFor([original, left, right])
+  const projection = projectionFor([original, left, right, ...context.map((item) => item.geometry)])
 
   const layer = (geometry: Geometry | undefined, color: string, dotted = false) => {
     if (!geometry) return null
@@ -92,6 +111,27 @@ export function GeometryStage({
           </clipPath>
         </defs>
         <rect fill={`url(#${clipId}-grid)`} height="620" width="1000" />
+        <g>
+          {context.map((item, contextIndex) => {
+            const configuredColor = item.style?.color
+            const color = typeof configuredColor === "string" ? configuredColor : roleColors[item.role]
+            return geometryPaths(item.geometry, projection).map((path, pathIndex) => (
+              <path
+                d={path}
+                fill={item.geometry.type === "Polygon" ? color : "none"}
+                fillOpacity={item.geometry.type === "Polygon" ? 0.06 + item.importance * 0.08 : 0}
+                fillRule="evenodd"
+                key={`${contextIndex}-${pathIndex}`}
+                opacity={0.35 + item.importance * 0.5}
+                stroke={color}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5 + item.importance * 2.5}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))
+          })}
+        </g>
         <g opacity="0.45">{layer(original, "#59635f", true)}</g>
         {mode === "overlay" ? (
           <>
@@ -119,10 +159,12 @@ export function GeometryStage({
           </>
         )}
       </svg>
-      <div className="pointer-events-none absolute inset-x-4 top-4 flex justify-between text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700">
-        <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">A · Douglas–Peucker</span>
-        <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">B · Visvalingam–Whyatt</span>
-      </div>
+      {comparisonLabels && (
+        <div className="pointer-events-none absolute inset-x-4 top-4 flex justify-between text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700">
+          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">A · Douglas–Peucker</span>
+          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">B · Visvalingam–Whyatt</span>
+        </div>
+      )}
     </div>
   )
 }

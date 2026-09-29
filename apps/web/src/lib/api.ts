@@ -92,6 +92,54 @@ export type DatasetVersion = {
   split_seed: number
   created_at: string
 }
+export type SceneRole = "target" | "sibling" | "parent" | "child" | "background" | "obstacle"
+export type SceneRegion = "europe" | "north-america" | "other"
+export type SceneMember = {
+  feature_id: string
+  role: SceneRole
+  importance: number
+  z_order: number
+  style: Record<string, unknown>
+  feature: Feature
+}
+export type Scene = {
+  id: string
+  dataset_id: string
+  name: string
+  target_feature_id: string
+  region: SceneRegion
+  locality: string
+  crs: string | null
+  viewport: Record<string, unknown>
+  style: Record<string, unknown>
+  scale_denominator: number | null
+  zoom: number | null
+  provenance: Record<string, unknown>
+  archived_at: string | null
+  members: SceneMember[]
+  created_at: string
+}
+export type Acceptability = "acceptable" | "unacceptable" | "unsure"
+export type FailureTag =
+  | "topology-failure"
+  | "visual-collision"
+  | "excessive-detail-loss"
+  | "characteristic-shape-loss"
+  | "context-inconsistency"
+  | "displacement-needed"
+export type SceneReview = {
+  id: string
+  scene_id: string
+  revision_id: string
+  candidate_a_id: string | null
+  candidate_b_id: string | null
+  choice: "A" | "B" | "equal" | "artifact"
+  acceptability: Acceptability
+  failure_tags: FailureTag[]
+  viewport: Record<string, unknown>
+  comment: string
+  created_at: string
+}
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1"
 
@@ -204,4 +252,39 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ split_seed: splitSeed }),
     }),
+  scenes: (datasetId: string) => request<Scene[]>(`/datasets/${datasetId}/scenes`),
+  createScene: (body: {
+    dataset_id: string
+    name: string
+    target_feature_id: string
+    region: SceneRegion
+    locality: string
+    crs?: string | null
+    viewport?: Record<string, unknown>
+    style?: Record<string, unknown>
+    scale_denominator?: number | null
+    zoom?: number | null
+    provenance?: Record<string, unknown>
+    members: Array<{
+      feature_id: string
+      role: Exclude<SceneRole, "target">
+      importance?: number
+      z_order?: number
+      style?: Record<string, unknown>
+    }>
+  }) => request<Scene>("/scenes", { method: "POST", body: JSON.stringify(body) }),
+  archiveScene: (sceneId: string) =>
+    request<Scene>(`/scenes/${sceneId}/archive`, { method: "POST" }),
+  sceneReviews: (sceneId: string) => request<SceneReview[]>(`/scenes/${sceneId}/reviews`),
+  createSceneReview: (body: {
+    scene_id: string
+    revision_id: string
+    candidate_a_id: string
+    candidate_b_id: string
+    choice: "A" | "B" | "equal" | "artifact"
+    acceptability: Acceptability
+    failure_tags: FailureTag[]
+    viewport?: Record<string, unknown>
+    comment?: string
+  }) => request<SceneReview>("/scene-reviews", { method: "POST", body: JSON.stringify(body) }),
 }

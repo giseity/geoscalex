@@ -13,8 +13,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { api, type Candidate, type Dataset, type Feature, type Geometry } from "@/lib/api"
-import type { AnnotationChoice } from "@/lib/api-extra"
+import { api, type Candidate, type Dataset, type Feature, type Geometry, type Scene } from "@/lib/api"
+import type { ReviewDraft } from "@/lib/api-extra"
 import { vertexCount } from "@/lib/geometry"
 
 const queryClient = new QueryClient({
@@ -23,6 +23,10 @@ const queryClient = new QueryClient({
 
 const GeometryEditor = lazy(() =>
   import("@/components/geometry-editor").then((module) => ({ default: module.GeometryEditor })),
+)
+
+const ScenesView = lazy(() =>
+  import("@/components/scenes-view").then((module) => ({ default: module.ScenesView })),
 )
 
 export function App() {
@@ -84,6 +88,7 @@ type WorkspaceShellProps = {
 function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellProps) {
   const [view, setView] = useState<LabView>("compare")
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null)
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null)
   const [budget, setBudget] = useState(12)
   const [candidateBusy, setCandidateBusy] = useState(false)
   const [leftOpen, setLeftOpen] = useState(true)
@@ -100,9 +105,13 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
     refetchInterval: (query) => query.state.data?.some((job) => job.status === "queued" || job.status === "running") ? 1000 : false,
   })
   const versionsQuery = useQuery({ queryKey: ["versions", dataset.id], queryFn: () => api.versions(dataset.id) })
+  const scenesQuery = useQuery({ queryKey: ["scenes", dataset.id], queryFn: () => api.scenes(dataset.id) })
   const jobStateFingerprint = (jobsQuery.data ?? []).map((job) => `${job.id}:${job.status}`).join("|")
   const features = featuresQuery.data ?? []
   const selectedFeature = features.find((feature) => feature.id === selectedFeatureId) ?? features[0]
+  const scenes = scenesQuery.data ?? []
+  const selectedScene = scenes.find((scene) => scene.id === selectedSceneId)
+  const activeScene = selectedScene?.target_feature_id === selectedFeature?.id ? selectedScene : undefined
   const candidatesQuery = useQuery({
     queryKey: ["candidates", selectedFeature?.current_revision.id],
     queryFn: () => api.candidates(selectedFeature!.current_revision.id),
@@ -118,6 +127,7 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
     if (!jobStateFingerprint) return
     void queryClient.invalidateQueries({ queryKey: ["features", dataset.id] })
     void queryClient.invalidateQueries({ queryKey: ["batches", dataset.id] })
+    void queryClient.invalidateQueries({ queryKey: ["scenes", dataset.id] })
   }, [dataset.id, jobStateFingerprint])
 
   useEffect(() => {
@@ -138,6 +148,7 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
     await queryClient.invalidateQueries({ queryKey: ["features", dataset.id] })
     await queryClient.invalidateQueries({ queryKey: ["batches", dataset.id] })
     await queryClient.invalidateQueries({ queryKey: ["revisions"] })
+    await queryClient.invalidateQueries({ queryKey: ["scenes", dataset.id] })
     if (message) {
       setNotice(message)
       window.setTimeout(() => setNotice(null), 2600)
@@ -176,30 +187,36 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
 
   return (
     <SidebarProvider onOpenChange={setLeftOpen} open={leftOpen}>
-      <LabSidebar batches={batchesQuery.data ?? []} dataset={dataset} datasets={datasets} features={features} onDatasetChange={onDatasetChange} onFeatureChange={(feature: Feature) => setSelectedFeatureId(feature.id)} onNewFeature={() => setEditor("new")} onViewChange={setView} selectedFeatureId={selectedFeature?.id ?? null} view={view} />
+      <LabSidebar batches={batchesQuery.data ?? []} dataset={dataset} datasets={datasets} features={features} onDatasetChange={onDatasetChange} onFeatureChange={(feature: Feature) => { setSelectedSceneId(null); setSelectedFeatureId(feature.id) }} onNewFeature={() => setEditor("new")} onViewChange={setView} selectedFeatureId={selectedFeature?.id ?? null} view={view} />
       <SidebarProvider className="min-w-0 flex-1" onOpenChange={setRightOpen} open={rightOpen}>
         <SidebarInset className="min-w-0 bg-[#f4f2ec]">
           <header className="sticky top-0 z-20 flex h-[65px] items-center gap-3 border-b bg-background/90 px-3 backdrop-blur lg:px-5">
             <Button aria-label="Toggle dataset sidebar" onClick={() => setLeftOpen((open) => !open)} size="icon-sm" variant="ghost"><PanelLeft /></Button>
             <div className="h-5 w-px bg-border" />
-            <div className="min-w-0"><p className="truncate text-sm font-semibold">{dataset.name}</p><p className="truncate text-[11px] text-muted-foreground">{view === "compare" ? selectedFeature?.name ?? "Workbench" : view}</p></div>
+            <div className="min-w-0"><p className="truncate text-sm font-semibold">{dataset.name}</p><p className="truncate text-[11px] text-muted-foreground">{view === "compare" ? activeScene?.name ?? selectedFeature?.name ?? "Workbench" : view}</p></div>
             <div className="ml-auto flex items-center gap-2">
               <span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"><CircleDot className="size-3 fill-emerald-500 text-emerald-600" /> localhost</span>
               <Button aria-label="Toggle inspector" onClick={() => setRightOpen((open) => !open)} size="icon-sm" variant="ghost"><PanelRight /></Button>
             </div>
           </header>
           {notice && <div className="fixed right-5 top-20 z-50 rounded-lg bg-slate-950 px-4 py-2 text-sm text-white shadow-xl">{notice}</div>}
-          {view === "compare" && <CompareView candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} onAnnotate={async (choice: AnnotationChoice) => {
+          {view === "compare" && <CompareView candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} scene={activeScene} onAnnotate={async (review: ReviewDraft) => {
             if (!selectedFeature || !annotationCandidateA || !annotationCandidateB) return
-            await api.annotate({ dataset_id: dataset.id, feature_id: selectedFeature.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice, viewport: { mode: "workbench", vertex_budget: budget } })
-            setNotice("Preference recorded")
+            if (activeScene) {
+              await api.createSceneReview({ scene_id: activeScene.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice: review.choice, acceptability: review.acceptability, failure_tags: review.failureTags, comment: review.comment, viewport: { ...activeScene.viewport, vertex_budget: budget } })
+              setNotice("Contextual review recorded")
+            } else {
+              await api.annotate({ dataset_id: dataset.id, feature_id: selectedFeature.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice: review.choice, viewport: { mode: "workbench", vertex_budget: budget } })
+              setNotice("Preference recorded")
+            }
           }} />}
+          {view === "scenes" && <Suspense fallback={<div className="grid min-h-[calc(100vh-65px)] place-content-center text-sm text-muted-foreground">Opening scene builder…</div>}><ScenesView datasetId={dataset.id} features={features} onArchive={async (scene: Scene) => { await api.archiveScene(scene.id); if (selectedSceneId === scene.id) setSelectedSceneId(null); await scenesQuery.refetch(); setNotice("Scene archived") }} onCreate={async (input) => { const scene = await api.createScene(input); await scenesQuery.refetch(); return scene }} onReview={(scene: Scene) => { setSelectedSceneId(scene.id); setSelectedFeatureId(scene.target_feature_id); setView("compare") }} onSelect={(scene: Scene) => setSelectedSceneId(scene.id)} scenes={scenes} selectedSceneId={selectedSceneId} /></Suspense>}
           {view === "generate" && <GenerateView generators={generatorsQuery.data ?? []} jobs={jobsQuery.data ?? []} onCancel={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onRefresh={() => { void jobsQuery.refetch(); void featuresQuery.refetch() }} onRun={async (generatorId, batchName, count, seed, parameters) => {
             await api.runGenerator({ dataset_id: dataset.id, generator_id: generatorId, batch_name: batchName, count, seed, parameters })
             await jobsQuery.refetch(); setNotice("Generator run queued")
           }} />}
           {view === "import" && <ImportView onImport={async (batchName, collection) => { const result = await api.importGeoJson(dataset.id, batchName, collection); await refreshFeatures(); return result }} />}
-          {view === "versions" && <VersionsView featureCount={features.length} onPublish={async (splitSeed) => { await api.publish(dataset.id, splitSeed); await versionsQuery.refetch() }} versions={versionsQuery.data ?? []} />}
+          {view === "versions" && <VersionsView featureCount={features.length} onPublish={async (splitSeed) => { await api.publish(dataset.id, splitSeed); await versionsQuery.refetch() }} sceneCount={scenes.length} versions={versionsQuery.data ?? []} />}
         </SidebarInset>
         {view === "compare" && <InspectorSidebar budget={budget} busy={candidateBusy} candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} onAddHole={() => setEditor("hole")} onArchive={async () => { if (selectedFeature) { await api.archiveFeature(selectedFeature.id); await refreshFeatures("Feature archived") } }} onBudgetChange={setBudget} onBuildCandidates={() => { void buildCandidates() }} onDuplicate={async () => { if (selectedFeature) { const copy = await api.duplicateFeature(selectedFeature.id); await refreshFeatures("Feature duplicated"); setSelectedFeatureId(copy.id) } }} onEdit={() => setEditor("edit")} onRestoreRevision={async (revisionId) => { if (selectedFeature) { await api.restoreRevision(selectedFeature.id, revisionId); await refreshFeatures("Revision restored"); await revisionsQuery.refetch() } }} revisions={revisionsQuery.data ?? []} />}
       </SidebarProvider>

@@ -11,10 +11,11 @@ import type { DatasetVersion } from "@/lib/api"
 type VersionsViewProps = {
   versions: DatasetVersion[]
   featureCount: number
+  sceneCount: number
   onPublish: (splitSeed: number) => Promise<void>
 }
 
-export function VersionsView({ versions, featureCount, onPublish }: VersionsViewProps) {
+export function VersionsView({ versions, featureCount, sceneCount, onPublish }: VersionsViewProps) {
   const [seed, setSeed] = useState(4812)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +42,7 @@ export function VersionsView({ versions, featureCount, onPublish }: VersionsView
           <CardHeader>
             <div className="grid size-10 place-items-center rounded-lg bg-[#e8f4f1] text-[#00796f]"><PackageCheck className="size-5" /></div>
             <CardTitle className="pt-2">Publish snapshot</CardTitle>
-            <CardDescription>{featureCount} active features will be split by batch to avoid train/test leakage.</CardDescription>
+            <CardDescription>{featureCount} active features and {sceneCount} contextual scenes will be split by batch or location group to avoid train/test leakage.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2"><Label htmlFor="split-seed">Split seed</Label><Input id="split-seed" onChange={(event) => setSeed(event.target.valueAsNumber)} type="number" value={seed} /></div>

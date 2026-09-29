@@ -37,7 +37,7 @@ import {
 import type { Batch, Dataset, Feature } from "@/lib/api"
 import { GeometryThumbnail } from "@/components/geometry-stage"
 
-export type LabView = "compare" | "generate" | "import" | "versions"
+export type LabView = "compare" | "scenes" | "generate" | "import" | "versions"
 
 type LabSidebarProps = {
   datasets: Dataset[]
@@ -54,6 +54,7 @@ type LabSidebarProps = {
 
 const navigation = [
   { id: "compare" as const, label: "Compare", icon: GitCompareArrows },
+  { id: "scenes" as const, label: "Scenes", icon: MapPinned },
   { id: "generate" as const, label: "Generate", icon: Beaker },
   { id: "import" as const, label: "Import", icon: FileUp },
   { id: "versions" as const, label: "Versions", icon: Boxes },
