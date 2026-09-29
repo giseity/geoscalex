@@ -1,5 +1,7 @@
 # ruff: noqa: E402, I001
 
+import hashlib
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -13,6 +15,7 @@ torch = pytest.importorskip("torch")
 from geoscalex.geometry.analysis import validate_geometry
 from geoscalex.ml.data import load_samples
 from geoscalex.ml.evaluation import evaluate
+from geoscalex.ml.experiment import run_experiment
 from geoscalex.ml.features import FEATURE_DIM, vertex_features
 from geoscalex.ml.inference import infer_geometry, load_checkpoint
 from geoscalex.ml.model import ModelConfig, RemoveMoveEncoder
@@ -32,12 +35,32 @@ def _export(export_dir: Path) -> None:
         {
             "revision_id": "revision-1",
             "split": "train",
+            "split_group": "fixture-1",
+            "geometry_type": "LineString",
+            "source": "test",
+            "coordinate_space": "local",
+            "properties_json": "{}",
             "geometry_wkb": to_wkb(shape(LINE)),
             "dp_scores": [None, 0.1, 0.8, 0.1, None],
             "vw_scores": [None, 0.1, 0.8, 0.1, None],
         }
     ]
-    pq.write_table(pa.Table.from_pylist(rows), export_dir / "features.parquet")
+    features_path = export_dir / "features.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), features_path)
+    checksum = hashlib.sha256(features_path.read_bytes()).hexdigest()
+    (export_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "geoscalex-dataset",
+                "schema_version": 3,
+                "dataset_id": "fixture",
+                "version": 1,
+                "feature_count": 1,
+                "files": [{"path": "features.parquet", "sha256": checksum}],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_encoder_starts_with_zero_movement_and_emits_per_vertex_scores() -> None:
@@ -100,3 +123,13 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     evaluation = evaluate(export_dir, checkpoint, split="train", ratios=(0.5,))
     assert evaluation["budgets"] == [0.5]
     assert evaluation["methods"]["encoder-remove-move"]["candidate_count"] == 1
+    experiment = run_experiment(
+        export_dir,
+        tmp_path / "experiment",
+        profile="smoke",
+        epochs=1,
+        batch_size=1,
+        ratios=(0.5,),
+    )
+    assert experiment["profile"] == "smoke"
+    assert Path(experiment["checkpoint"]).exists()

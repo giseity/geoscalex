@@ -48,6 +48,8 @@ Create and audit a deterministic synthetic pilot before training:
 ```bash
 uv run geoscalex-pilot --count 1000 --output .geoscalex/pilot-v1.json
 uv run geoscalex-audit .geoscalex/exports/<dataset-id>/v1
+uv run geoscalex-experiment .geoscalex/exports/<dataset-id>/v1 \
+  .geoscalex/experiments/pilot-smoke-v1 --profile smoke --epochs 10
 ```
 
 The `smoke` model profile validates the pipeline on a CPU. Use `--profile standard` for the
