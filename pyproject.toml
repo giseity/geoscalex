@@ -34,7 +34,7 @@ dev = [
   "types-shapely>=2.1"
 ]
 ml = [
-  "torch>=2.7,<3"
+  "torch==2.7.1"
 ]
 
 [dependency-groups]
@@ -46,6 +46,14 @@ dev = [
   "ruff>=0.13",
   "types-shapely>=2.1"
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.scripts]
 geoscalex-api = "geoscalex.api.main:run"

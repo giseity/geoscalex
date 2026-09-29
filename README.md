@@ -40,8 +40,10 @@ uv run geoscalex-evaluate .geoscalex/exports/<dataset-id>/v1 \
 
 Set `GEOSCALEX_ENCODER_CHECKPOINT` to the checkpoint path and restart the API and worker. The
 `encoder-remove-move` option then appears in the same matched-budget comparison UI as the
-classical and DeepSeek methods. Training is CPU-first by default; `--device cuda` is available
-when the installed PyTorch build and hardware support it.
+classical and DeepSeek methods. The project pins the optional dependency to PyTorch's CPU index for
+reproducible development on this machine. `--device cuda` remains supported by the code; preparing
+a CUDA environment requires changing the explicit `pytorch-cpu` source to a compatible CUDA index
+and regenerating the lockfile.
 
 Create and audit a deterministic synthetic pilot before training:
 
@@ -67,5 +69,6 @@ See [the Dataset Lab architecture](docs/dataset-lab-v0.1.md), the
 [contextual scenes v0.2 contract](docs/contextual-scenes-v0.2.md), the
 [automated scene extraction v0.3 contract](docs/automated-scene-extraction-v0.3.md), the
 [budgeted neural simplification v0.4 contract](docs/budgeted-neural-simplification-v0.4.md), the
-[pilot benchmark v0.5 contract](docs/pilot-benchmark-v0.5.md), and the
+[pilot benchmark v0.5 contract](docs/pilot-benchmark-v0.5.md), the
+[real-data source shortlist](docs/real-data-sources-v0.5.md), and the
 [research proposal](adaptive-neural-gis-generalization.md).

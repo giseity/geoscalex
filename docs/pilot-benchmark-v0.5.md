@@ -24,6 +24,7 @@ The default pilot contains 1,000 geometries:
 - low, medium, and high vertex-count strata;
 - deterministic parameter variation within each generator;
 - multiple split groups per family and stratum;
+- a family-covered split seed with an approximately 80/10/10 group balance;
 - generator version, code hash, parameters, seed, family, and stratum on every feature.
 
 Polygon holes are excluded because the v0.4 learned decoder does not support them. Individual
