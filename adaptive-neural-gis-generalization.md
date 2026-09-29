@@ -6,7 +6,9 @@ The goal is to build a learned system for **multiscale GIS geometry simplificati
 
 The initial focus is intentionally narrow:
 
-> Given a line or polygon ring, predict the importance of each existing vertex so that the geometry can be simplified at different map scales without redrawing it.
+> Given a line or polygon ring and an explicit complexity budget, predict which existing vertices
+> matter and, once reviewed movement supervision is available, how retained vertices should move
+> to produce a better simplified shape.
 
 The model should learn which geometric details are visually or structurally important while allowing less important detail to disappear as the map becomes coarser.
 
@@ -49,7 +51,14 @@ online inference
 
 # 2. Core V1 Problem
 
-V1 will **not generate new coordinates**.
+V1 is split into two deliberately incremental capabilities:
+
+- **V1A** predicts a hierarchical importance score for every existing vertex;
+- **V1B** retains that correspondence and additionally predicts a budget-conditioned displacement
+  for retained vertices.
+
+V1B can therefore produce new coordinates without immediately taking on arbitrary output
+cardinality, insertion, reordering, or unconstrained sequence generation.
 
 Instead, the model will receive an existing geometry:
 
@@ -104,7 +113,7 @@ Zooming in therefore adds detail rather than replacing the geometry with a compl
 
 ---
 
-# 3. Why Start With Vertex Selection?
+# 3. Why Start With Vertex Selection and Constrained Movement?
 
 Allowing the model to directly generate replacement coordinates creates many additional problems:
 
@@ -132,6 +141,11 @@ Computational geometry can then enforce validity.
 The principle for V1 is therefore:
 
 > **Machine learning decides what is important. Deterministic geometry code decides what is valid.**
+
+After the selection baseline is working, a displacement head can move retained vertices while a
+deterministic decoder continues to enforce source order, endpoints, ring closure, budget, and
+validity. This remove-and-move formulation is the first generative experiment. Fully arbitrary
+coordinate generation and diffusion models remain optional later research directions.
 
 ## 3.1 Why Use a Learned Decision Model?
 
@@ -716,13 +730,21 @@ where:
 - `N` = number of vertices,
 - `F` = feature dimension.
 
-The output is:
+The V1A output is:
 
 ```text
 y.shape = [N]
 ```
 
-containing one predicted importance value per vertex.
+containing one predicted importance value per vertex. V1B adds:
+
+```text
+delta.shape = [N, 2]
+```
+
+containing budget-conditioned coordinate offsets. Only offsets for retained vertices participate
+in reconstruction, and movement supervision is masked unless a reviewed candidate provides a
+trusted source-to-output correspondence.
 
 ---
 
@@ -785,9 +807,9 @@ Bidirectional Transformer encoder
         ↓
 Bidirectional Transformer encoder
         ↓
-per-vertex regression head
-        ↓
-importance / critical scale
+shared vertex representation
+        ├─→ per-vertex importance / critical scale
+        └─→ budget-conditioned displacement (dx, dy)
 ```
 
 An initial configuration might use approximately:
@@ -804,7 +826,9 @@ attention heads:
 
 The total model may only require a few million parameters.
 
-The model does not need to be LLM-scale.
+The model does not need to be LLM-scale. Diffusion and Diffusion Transformer variants should not
+be added until a direct remove-and-move baseline demonstrates a concrete need for multimodal
+candidate sampling.
 
 The Transformer is a hypothesis, not a requirement. It should be compared with simpler models such as feature-based regressors, small multilayer networks, and one-dimensional convolutional sequence models. These ablations reveal whether useful importance is mostly local or truly benefits from long-range context.
 
