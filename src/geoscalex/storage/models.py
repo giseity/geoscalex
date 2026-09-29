@@ -99,10 +99,17 @@ class Candidate(Record):
     )
     method: Mapped[str] = mapped_column(String(60))
     method_version: Mapped[str] = mapped_column(String(32), default="1")
+    method_kind: Mapped[str] = mapped_column(String(32), default="classical")
+    job_id: Mapped[str | None] = mapped_column(String(36), index=True)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    requested_budget: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    resolved_vertex_budget: Mapped[int | None] = mapped_column(Integer, index=True)
     geometry_geojson: Mapped[dict[str, Any]] = mapped_column(JSON)
     vertex_scores: Mapped[list[float | None]] = mapped_column(JSON, default=list)
     protected_mask: Mapped[list[bool]] = mapped_column(JSON, default=list)
+    source_mapping: Mapped[list[int]] = mapped_column(JSON, default=list)
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    diagnostics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
@@ -124,9 +131,7 @@ class Scene(Record):
     __tablename__ = "scenes"
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(200))
-    target_feature_id: Mapped[str] = mapped_column(
-        ForeignKey("features.id", ondelete="CASCADE")
-    )
+    target_feature_id: Mapped[str] = mapped_column(ForeignKey("features.id", ondelete="CASCADE"))
     region: Mapped[str] = mapped_column(String(32))
     locality: Mapped[str] = mapped_column(String(240), default="")
     crs: Mapped[str | None] = mapped_column(String(120))

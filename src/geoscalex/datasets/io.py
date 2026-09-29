@@ -116,8 +116,15 @@ async def publish_dataset(
             "revision_id": candidate.revision_id,
             "method": candidate.method,
             "method_version": candidate.method_version,
+            "method_kind": candidate.method_kind,
+            "job_id": candidate.job_id,
             "parameters_json": json.dumps(candidate.parameters, sort_keys=True),
+            "requested_budget_json": json.dumps(candidate.requested_budget, sort_keys=True),
+            "resolved_vertex_budget": candidate.resolved_vertex_budget,
             "geometry_wkb": to_wkb(shape(candidate.geometry_geojson)),
+            "source_mapping": candidate.source_mapping,
+            "provenance_json": json.dumps(candidate.provenance, sort_keys=True),
+            "diagnostics_json": json.dumps(candidate.diagnostics, sort_keys=True),
             "metrics_json": json.dumps(candidate.metrics, sort_keys=True),
         }
         for candidate in candidates
@@ -128,8 +135,15 @@ async def publish_dataset(
             ("revision_id", pa.string()),
             ("method", pa.string()),
             ("method_version", pa.string()),
+            ("method_kind", pa.string()),
+            ("job_id", pa.string()),
             ("parameters_json", pa.string()),
+            ("requested_budget_json", pa.string()),
+            ("resolved_vertex_budget", pa.int64()),
             ("geometry_wkb", pa.binary()),
+            ("source_mapping", pa.list_(pa.int64())),
+            ("provenance_json", pa.string()),
+            ("diagnostics_json", pa.string()),
             ("metrics_json", pa.string()),
         ]
     )
@@ -197,9 +211,7 @@ async def publish_dataset(
         scene_target_revision = active_revisions.get(scene.target_feature_id)
         if target is None or scene_target_revision is None:
             raise ValueError(f"Scene {scene.name!r} has an archived target")
-        split_group = str(
-            scene.provenance.get("location_group") or target.batch_id or scene.id
-        )
+        split_group = str(scene.provenance.get("location_group") or target.batch_id or scene.id)
         split = _split(split_group, split_seed)
         scene_rows.append(
             {
@@ -349,7 +361,7 @@ async def publish_dataset(
     ]
     manifest = {
         "format": "geoscalex-dataset",
-        "schema_version": 2,
+        "schema_version": 3,
         "dataset_id": str(dataset_id),
         "dataset_name": dataset.name,
         "version": version_number,

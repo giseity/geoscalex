@@ -193,6 +193,49 @@ def _selected_indices(scores: list[float], tolerance: float | None, budget: int 
     return {index for index, score in enumerate(scores) if score >= threshold}
 
 
+def _budgeted_indices(geometry: dict[str, Any], hierarchy: Hierarchy, budget: int) -> set[int]:
+    selectable: list[int] = []
+    cursor = 0
+    for ring_length in hierarchy.ring_lengths:
+        ring_indices = list(range(cursor, cursor + ring_length))
+        cursor += ring_length
+        selectable.extend(ring_indices[:-1] if geometry["type"] == "Polygon" else ring_indices)
+    minimum = 3 * len(hierarchy.ring_lengths) if geometry["type"] == "Polygon" else 2
+    count = max(minimum, min(budget, len(selectable)))
+    ordered = sorted(selectable, key=lambda index: (-hierarchy.scores[index], index))
+    selected = set(ordered[:count])
+    if geometry["type"] == "Polygon" and len(hierarchy.ring_lengths) > 1:
+        cursor = 0
+        for ring_length in hierarchy.ring_lengths:
+            ring = list(range(cursor, cursor + ring_length - 1))
+            cursor += ring_length
+            if len(selected.intersection(ring)) < 3:
+                selected.update(
+                    sorted(ring, key=lambda index: (-hierarchy.scores[index], index))[:3]
+                )
+        while len(selected) > count:
+            removable = sorted(
+                selected,
+                key=lambda index: (hierarchy.scores[index], -index),
+            )
+            removed = False
+            cursor = 0
+            for index in removable:
+                for ring_length in hierarchy.ring_lengths:
+                    ring_set = set(range(cursor, cursor + ring_length - 1))
+                    cursor += ring_length
+                    if index in ring_set and len(selected.intersection(ring_set)) > 3:
+                        selected.remove(index)
+                        removed = True
+                        break
+                cursor = 0
+                if removed:
+                    break
+            if not removed:
+                break
+    return selected
+
+
 def _candidate_from_selection(
     geometry: dict[str, Any], hierarchy: Hierarchy, selected: set[int]
 ) -> dict[str, Any]:
@@ -238,7 +281,11 @@ def build_candidate(
 ) -> tuple[dict[str, Any], Hierarchy, dict[str, Any]]:
     normalized = validate_geometry(geometry).geometry
     hierarchy = hierarchy_scores(normalized, method)
-    selected = _selected_indices(hierarchy.scores, tolerance, budget)
+    selected = (
+        _budgeted_indices(normalized, hierarchy, budget)
+        if budget is not None
+        else _selected_indices(hierarchy.scores, tolerance, None)
+    )
     selected.update(index for index, value in enumerate(hierarchy.protected) if value)
 
     candidate = _candidate_from_selection(normalized, hierarchy, selected)

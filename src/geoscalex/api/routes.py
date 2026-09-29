@@ -33,6 +33,8 @@ from geoscalex.domain import (
     SceneRead,
     SceneReviewCreate,
     SceneReviewRead,
+    SimplificationMethodRead,
+    SimplificationRunCreate,
     WorkspaceCreate,
     WorkspaceRead,
 )
@@ -40,6 +42,7 @@ from geoscalex.generators import generator_registry
 from geoscalex.generators.registry import GeneratorDefinition
 from geoscalex.geometry.analysis import GeometryValidationError
 from geoscalex.scenes.extraction import build_extraction_plan
+from geoscalex.simplification import method_registry
 from geoscalex.storage import repository
 
 router = APIRouter()
@@ -243,9 +246,7 @@ async def archive_scene(scene_id: UUID, session: DatabaseSession) -> SceneRead:
 
 
 @router.post("/scene-reviews", response_model=SceneReviewRead, status_code=201)
-async def create_scene_review(
-    data: SceneReviewCreate, session: DatabaseSession
-) -> SceneReviewRead:
+async def create_scene_review(data: SceneReviewCreate, session: DatabaseSession) -> SceneReviewRead:
     try:
         return await repository.create_scene_review(session, data)
     except LookupError as error:
@@ -267,9 +268,7 @@ async def preview_scene_extraction(
 
 
 @router.post("/scene-extractions", response_model=JobRead, status_code=202)
-async def create_scene_extraction(
-    data: SceneExtractionCreate, session: DatabaseSession
-) -> JobRead:
+async def create_scene_extraction(data: SceneExtractionCreate, session: DatabaseSession) -> JobRead:
     try:
         return await repository.enqueue_scene_extraction(session, data)
     except LookupError as error:
@@ -279,9 +278,7 @@ async def create_scene_extraction(
 
 
 @router.get("/scenes/{scene_id}/reviews", response_model=list[SceneReviewRead])
-async def scene_reviews(
-    scene_id: UUID, session: DatabaseSession
-) -> list[SceneReviewRead]:
+async def scene_reviews(scene_id: UUID, session: DatabaseSession) -> list[SceneReviewRead]:
     try:
         return await repository.list_scene_reviews(session, scene_id)
     except LookupError as error:
@@ -311,6 +308,23 @@ async def create_hole(feature_id: UUID, data: HoleCreate, session: DatabaseSessi
 @router.get("/revisions/{revision_id}/candidates", response_model=list[CandidateRead])
 async def candidates(revision_id: UUID, session: DatabaseSession) -> list[CandidateRead]:
     return await repository.list_candidates(session, revision_id)
+
+
+@router.get("/simplification-methods", response_model=list[SimplificationMethodRead])
+async def simplification_methods() -> list[SimplificationMethodRead]:
+    return method_registry.definitions()
+
+
+@router.post("/simplification-runs", response_model=JobRead, status_code=202)
+async def create_simplification_run(
+    data: SimplificationRunCreate, session: DatabaseSession
+) -> JobRead:
+    try:
+        return await repository.enqueue_simplification_run(session, data)
+    except LookupError as error:
+        raise not_found(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/generators", response_model=list[GeneratorDefinition])

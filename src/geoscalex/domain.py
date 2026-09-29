@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -65,6 +65,11 @@ class FailureTag(StrEnum):
     SHAPE_LOSS = "characteristic-shape-loss"
     CONTEXT = "context-inconsistency"
     DISPLACEMENT = "displacement-needed"
+
+
+class BudgetKind(StrEnum):
+    VERTEX_COUNT = "vertex-count"
+    RETENTION_RATIO = "retention-ratio"
 
 
 class ApiModel(BaseModel):
@@ -165,10 +170,17 @@ class CandidateRead(ApiModel):
     revision_id: UUID
     method: str
     method_version: str
+    method_kind: str = "classical"
+    job_id: UUID | None = None
     parameters: dict[str, Any]
+    requested_budget: dict[str, Any] = Field(default_factory=dict)
+    resolved_vertex_budget: int | None = None
     geometry: dict[str, Any]
     vertex_scores: list[float | None]
     protected_mask: list[bool]
+    source_mapping: list[int] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
     metrics: dict[str, Any]
     created_at: datetime
 
@@ -178,6 +190,36 @@ class CandidateCreate(ApiModel):
     method: str
     tolerance: float | None = Field(default=None, ge=0)
     vertex_budget: int | None = Field(default=None, ge=2)
+
+
+class VertexCountBudget(ApiModel):
+    kind: Literal[BudgetKind.VERTEX_COUNT] = BudgetKind.VERTEX_COUNT
+    value: int = Field(ge=2)
+
+
+class RetentionRatioBudget(ApiModel):
+    kind: Literal[BudgetKind.RETENTION_RATIO] = BudgetKind.RETENTION_RATIO
+    value: float = Field(gt=0, le=1)
+
+
+SimplificationBudget = VertexCountBudget | RetentionRatioBudget
+
+
+class SimplificationRunCreate(ApiModel):
+    revision_id: UUID
+    method: str = Field(min_length=1, max_length=80)
+    budget: SimplificationBudget
+
+
+class SimplificationMethodRead(ApiModel):
+    id: str
+    name: str
+    version: str
+    kind: str
+    geometry_types: list[GeometryKind]
+    supports_holes: bool
+    available: bool
+    unavailable_reason: str | None = None
 
 
 class HoleCreate(ApiModel):

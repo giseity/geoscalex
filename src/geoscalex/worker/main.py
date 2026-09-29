@@ -10,6 +10,7 @@ from geoscalex.domain import (
     FeatureCreate,
     GeneratorRunCreate,
     SceneExtractionCreate,
+    SimplificationRunCreate,
     utc_now,
 )
 from geoscalex.generators import generator_registry
@@ -156,6 +157,29 @@ async def execute_scene_extraction_job(job_id: str) -> None:
         await session.commit()
 
 
+async def execute_simplification_job(job_id: str) -> None:
+    async with Session() as session:
+        job = await repository.require(session, models.Job, job_id)
+        payload = SimplificationRunCreate.model_validate(job.payload)
+        if payload.method not in {"douglas-peucker", "visvalingam-whyatt"}:
+            raise ValueError(f"Worker does not yet support method: {payload.method}")
+        candidate = await repository.execute_classical_simplification(session, job, payload)
+        await session.refresh(job)
+        if job.cancel_requested:
+            job.status = "cancelled"
+            job.result = {"discarded_candidate_id": str(candidate.id)}
+            job.finished_at = utc_now()
+            job.logs = [*job.logs, "Cancelled after candidate generation"]
+            await session.commit()
+            return
+        job.progress = 1.0
+        job.status = "succeeded"
+        job.result = {"candidate_ids": [str(candidate.id)]}
+        job.finished_at = utc_now()
+        job.logs = [*job.logs, "Simplification candidate created"]
+        await session.commit()
+
+
 async def execute(job_id: str) -> None:
     try:
         async with Session() as session:
@@ -165,6 +189,8 @@ async def execute(job_id: str) -> None:
             await execute_generator_job(job_id)
         elif kind == "scene-extraction":
             await execute_scene_extraction_job(job_id)
+        elif kind == "simplification-run":
+            await execute_simplification_job(job_id)
         else:
             raise ValueError(f"Unknown job kind: {kind}")
     except Exception as error:

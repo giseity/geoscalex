@@ -35,12 +35,15 @@ from geoscalex.domain import (
     SceneRead,
     SceneReviewCreate,
     SceneReviewRead,
+    SimplificationRunCreate,
     WorkspaceCreate,
     WorkspaceRead,
     utc_now,
 )
 from geoscalex.geometry.analysis import validate_geometry
 from geoscalex.geometry.simplify import add_polygon_hole, build_candidate
+from geoscalex.simplification.budget import ResolvedBudget, resolve_budget
+from geoscalex.simplification.registry import method_registry
 from geoscalex.storage import models
 
 
@@ -470,9 +473,7 @@ async def get_scene(session: AsyncSession, scene_id: UUID) -> SceneRead:
     return await scene_read(session, await require(session, models.Scene, scene_id))
 
 
-async def set_scene_archived(
-    session: AsyncSession, scene_id: UUID, archived: bool
-) -> SceneRead:
+async def set_scene_archived(session: AsyncSession, scene_id: UUID, archived: bool) -> SceneRead:
     scene = await require(session, models.Scene, scene_id)
     scene.archived_at = utc_now() if archived else None
     await session.commit()
@@ -480,9 +481,7 @@ async def set_scene_archived(
     return await scene_read(session, scene)
 
 
-async def create_scene_review(
-    session: AsyncSession, data: SceneReviewCreate
-) -> SceneReviewRead:
+async def create_scene_review(session: AsyncSession, data: SceneReviewCreate) -> SceneReviewRead:
     scene = await require(session, models.Scene, data.scene_id)
     revision = await require(session, models.GeometryRevision, data.revision_id)
     if revision.feature_id != scene.target_feature_id:
@@ -500,9 +499,7 @@ async def create_scene_review(
     return SceneReviewRead.model_validate(record)
 
 
-async def list_scene_reviews(
-    session: AsyncSession, scene_id: UUID
-) -> list[SceneReviewRead]:
+async def list_scene_reviews(session: AsyncSession, scene_id: UUID) -> list[SceneReviewRead]:
     await require(session, models.Scene, scene_id)
     records = (
         await session.scalars(
@@ -520,38 +517,153 @@ def candidate_read(record: models.Candidate) -> CandidateRead:
         revision_id=record.revision_id,
         method=record.method,
         method_version=record.method_version,
+        method_kind=record.method_kind,
+        job_id=record.job_id,
         parameters=record.parameters,
+        requested_budget=record.requested_budget,
+        resolved_vertex_budget=record.resolved_vertex_budget,
         geometry=record.geometry_geojson,
         vertex_scores=record.vertex_scores,
         protected_mask=record.protected_mask,
+        source_mapping=record.source_mapping,
+        provenance=record.provenance,
+        diagnostics=record.diagnostics,
         metrics=record.metrics,
         created_at=record.created_at,
     )
 
 
-async def create_candidate(session: AsyncSession, data: CandidateCreate) -> CandidateRead:
-    revision = await require(session, models.GeometryRevision, data.revision_id)
+def _source_mapping(original: dict[str, Any], candidate: dict[str, Any]) -> list[int]:
+    if original["type"] == "LineString":
+        source = original["coordinates"]
+        return [source.index(point) for point in candidate["coordinates"]]
+    mapping_indices: list[int] = []
+    offset = 0
+    for source_ring, candidate_ring in zip(
+        original["coordinates"], candidate["coordinates"], strict=True
+    ):
+        unique_source = source_ring[:-1]
+        mapping_indices.extend(offset + unique_source.index(point) for point in candidate_ring[:-1])
+        offset += len(unique_source)
+    return mapping_indices
+
+
+async def _create_classical_candidate(
+    session: AsyncSession,
+    revision: models.GeometryRevision,
+    method: str,
+    *,
+    tolerance: float | None,
+    resolved: ResolvedBudget | None,
+    job_id: str | None = None,
+) -> CandidateRead:
     candidate, hierarchy, metrics = build_candidate(
         revision.geometry_geojson,
-        data.method,
-        tolerance=data.tolerance,
-        budget=data.vertex_budget,
+        method,
+        tolerance=tolerance,
+        budget=resolved.vertex_count if resolved else None,
     )
     scores = [None if value == float("inf") else value for value in hierarchy.scores]
+    achieved = int(metrics["vertex_count"])
+    resolved_count = resolved.vertex_count if resolved else None
+    metrics = {
+        **metrics,
+        "requested_vertex_budget": resolved_count,
+        "budget_satisfied": resolved_count is None or achieved == resolved_count,
+    }
     record = models.Candidate(
         revision_id=revision.id,
-        method=data.method,
+        method=method,
         method_version="1",
-        parameters={"tolerance": data.tolerance, "vertex_budget": data.vertex_budget},
+        method_kind="classical",
+        job_id=job_id,
+        parameters={
+            "tolerance": tolerance,
+            "vertex_budget": resolved_count,
+        },
+        requested_budget=resolved.requested if resolved else {},
+        resolved_vertex_budget=resolved_count,
         geometry_geojson=candidate,
         vertex_scores=scores,
         protected_mask=hierarchy.protected,
+        source_mapping=_source_mapping(revision.geometry_geojson, candidate),
+        provenance={"engine": "geoscalex", "method": method},
+        diagnostics={"fallback_used": False},
         metrics=metrics,
     )
     session.add(record)
     await session.commit()
     await session.refresh(record)
     return candidate_read(record)
+
+
+async def create_candidate(session: AsyncSession, data: CandidateCreate) -> CandidateRead:
+    revision = await require(session, models.GeometryRevision, data.revision_id)
+    method = method_registry.get(data.method)
+    if method.kind != "classical":
+        raise ValueError("The compatibility candidate endpoint only supports classical methods")
+    resolved = None
+    if data.vertex_budget is not None:
+        from geoscalex.domain import VertexCountBudget
+
+        resolved = resolve_budget(
+            revision.geometry_geojson, VertexCountBudget(value=data.vertex_budget)
+        )
+    return await _create_classical_candidate(
+        session,
+        revision,
+        data.method,
+        tolerance=data.tolerance,
+        resolved=resolved,
+    )
+
+
+async def enqueue_simplification_run(
+    session: AsyncSession, data: SimplificationRunCreate
+) -> JobRead:
+    revision = await require(session, models.GeometryRevision, data.revision_id)
+    method = method_registry.get(data.method)
+    geometry = validate_geometry(revision.geometry_geojson)
+    if geometry.geometry_type not in {kind.value for kind in method.geometry_types}:
+        raise ValueError(f"{method.name} does not support {geometry.geometry_type}")
+    if (
+        geometry.geometry_type == "Polygon"
+        and geometry.ring_count > 1
+        and not method.supports_holes
+    ):
+        raise ValueError(f"{method.name} does not support polygon holes")
+    if not method.available:
+        raise ValueError(method.unavailable_reason or f"{method.name} is unavailable")
+    resolved = resolve_budget(revision.geometry_geojson, data.budget)
+    job = models.Job(
+        kind="simplification-run",
+        payload={
+            **data.model_dump(mode="json"),
+            "resolved_vertex_budget": resolved.vertex_count,
+            "source_vertex_count": resolved.source_vertex_count,
+            "method_version": method.version,
+            "method_kind": method.kind,
+        },
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+    return job_read(job)
+
+
+async def execute_classical_simplification(
+    session: AsyncSession, job: models.Job, data: SimplificationRunCreate
+) -> CandidateRead:
+    revision = await require(session, models.GeometryRevision, data.revision_id)
+    resolved = resolve_budget(revision.geometry_geojson, data.budget)
+    return await _create_classical_candidate(
+        session,
+        revision,
+        data.method,
+        tolerance=None,
+        resolved=resolved,
+        job_id=job.id,
+    )
 
 
 async def list_candidates(session: AsyncSession, revision_id: UUID) -> list[CandidateRead]:
@@ -596,9 +708,7 @@ async def enqueue_generator_run(
     return job_read(job)
 
 
-async def enqueue_scene_extraction(
-    session: AsyncSession, data: SceneExtractionCreate
-) -> JobRead:
+async def enqueue_scene_extraction(session: AsyncSession, data: SceneExtractionCreate) -> JobRead:
     await require(session, models.Dataset, data.dataset_id)
     if data.target_batch_id is not None:
         batch = await require(session, models.Batch, data.target_batch_id)

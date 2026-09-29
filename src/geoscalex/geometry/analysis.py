@@ -21,6 +21,7 @@ class GeometryAnalysis:
     geometry: dict[str, Any]
     geometry_type: str
     vertex_count: int
+    coordinate_count: int
     ring_count: int
     length: float
     area: float
@@ -78,11 +79,13 @@ def validate_geometry(geojson: dict[str, Any]) -> GeometryAnalysis:
     normalized = mapping(geometry)
     if isinstance(geometry, LineString):
         vertex_count = len(geometry.coords)
+        coordinate_count = vertex_count
         ring_count = 0
     elif isinstance(geometry, Polygon):
-        vertex_count = len(geometry.exterior.coords) + sum(
+        coordinate_count = len(geometry.exterior.coords) + sum(
             len(ring.coords) for ring in geometry.interiors
         )
+        vertex_count = coordinate_count - 1 - len(geometry.interiors)
         ring_count = 1 + len(geometry.interiors)
     else:
         raise GeometryValidationError("Geometry normalization produced an unsupported type")
@@ -92,6 +95,7 @@ def validate_geometry(geojson: dict[str, Any]) -> GeometryAnalysis:
         geometry=normalized,
         geometry_type=geometry.geom_type,
         vertex_count=vertex_count,
+        coordinate_count=coordinate_count,
         ring_count=ring_count,
         length=float(geometry.length),
         area=float(geometry.area),
@@ -106,6 +110,7 @@ def analyze_geometry(geojson: dict[str, Any]) -> dict[str, Any]:
     return {
         "geometry_type": analysis.geometry_type,
         "vertex_count": analysis.vertex_count,
+        "coordinate_count": analysis.coordinate_count,
         "ring_count": analysis.ring_count,
         "length": analysis.length,
         "area": analysis.area,
@@ -120,6 +125,15 @@ def comparison_metrics(original: dict[str, Any], candidate: dict[str, Any]) -> d
     result = shape(validate_geometry(candidate).geometry)
     original_analysis = analyze_geometry(original)
     candidate_analysis = analyze_geometry(candidate)
+    overlap_metrics: dict[str, float] = {}
+    if source.geom_type == "Polygon" and result.geom_type == "Polygon":
+        union_area = source.union(result).area
+        overlap_metrics = {
+            "intersection_over_union": float(
+                source.intersection(result).area / union_area if union_area else 1.0
+            ),
+            "symmetric_difference_area": float(source.symmetric_difference(result).area),
+        }
     return {
         **candidate_analysis,
         "original_vertex_count": original_analysis["vertex_count"],
@@ -129,4 +143,5 @@ def comparison_metrics(original: dict[str, Any], candidate: dict[str, Any]) -> d
         "frechet_distance": float(frechet_distance(source, result)),
         "length_delta": float(result.length - source.length),
         "area_delta": float(result.area - source.area),
+        **overlap_metrics,
     }
