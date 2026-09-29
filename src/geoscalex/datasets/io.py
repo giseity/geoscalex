@@ -71,7 +71,7 @@ async def publish_dataset(
         dp = hierarchy_scores(revision.geometry_geojson, "douglas-peucker")
         vw = hierarchy_scores(revision.geometry_geojson, "visvalingam-whyatt")
         metrics = analyze_geometry(revision.geometry_geojson)
-        split_group = feature.batch_id or feature.id
+        split_group = str(revision.properties.get("split_group") or feature.batch_id or feature.id)
         split = _split(split_group, split_seed)
         rows.append(
             {

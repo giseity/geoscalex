@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from geoscalex.config import settings
 from geoscalex.datasets.audit import audit_export
 from geoscalex.datasets.io import publish_dataset
+from geoscalex.datasets.pilot import LINE_GENERATORS, PilotConfig, build_pilot
 from geoscalex.domain import (
     DatasetCreate,
     FeatureCreate,
@@ -141,3 +142,38 @@ def test_dataset_audit_rejects_cross_split_duplicate_geometry(tmp_path: Path) ->
     report = audit_export(tmp_path)
     assert report["ok"] is False
     assert report["features"]["cross_split_duplicates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pilot_builder_creates_balanced_audited_export(tmp_path: Path) -> None:
+    old_data_dir = settings.data_dir
+    settings.data_dir = tmp_path / "data"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'pilot.sqlite3'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            result = await build_pilot(
+                session,
+                PilotConfig(
+                    count=30,
+                    polygon_fraction=0.5,
+                    group_size=1,
+                    workspace_name="Pilot tests",
+                    dataset_name="Balanced pilot",
+                ),
+            )
+        audit = audit_export(Path(result["manifest_path"]).parent)
+        assert result["line_count"] == 15
+        assert result["polygon_count"] == 15
+        assert audit["ok"] is True
+        assert audit["features"]["geometry_types"] == {"LineString": 15, "Polygon": 15}
+        assert audit["features"]["model_eligible"] == 30
+        assert set(audit["features"]["generator_families"]) == {
+            *LINE_GENERATORS,
+            "irregular-polygon",
+        }
+    finally:
+        settings.data_dir = old_data_dir
+        await engine.dispose()

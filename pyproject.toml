@@ -53,6 +53,7 @@ geoscalex-worker = "geoscalex.worker.main:run"
 geoscalex-train = "geoscalex.ml.training:run"
 geoscalex-evaluate = "geoscalex.ml.evaluation:run"
 geoscalex-audit = "geoscalex.datasets.audit:run"
+geoscalex-pilot = "geoscalex.datasets.pilot:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/geoscalex"]
