@@ -71,5 +71,6 @@ See [the Dataset Lab architecture](docs/dataset-lab-v0.1.md), the
 [budgeted neural simplification v0.4 contract](docs/budgeted-neural-simplification-v0.4.md), the
 [pilot benchmark v0.5 contract](docs/pilot-benchmark-v0.5.md), the
 [synthetic pilot findings](docs/pilot-findings-v0.5.md), the
+[quality-selected supervision v0.6 contract](docs/quality-selected-supervision-v0.6.md), the
 [real-data source shortlist](docs/real-data-sources-v0.5.md), and the
 [research proposal](adaptive-neural-gis-generalization.md).
