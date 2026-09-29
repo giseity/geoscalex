@@ -289,6 +289,43 @@ class SceneReviewRead(SceneReviewCreate):
     created_at: datetime
 
 
+class SceneExtractionCreate(ApiModel):
+    dataset_id: UUID
+    target_batch_id: UUID | None = None
+    region: SceneRegion = SceneRegion.EUROPE
+    locality: str = Field(default="", max_length=240)
+    location_group_prefix: str = Field(default="auto", min_length=1, max_length=120)
+    scale_denominator: float = Field(default=50_000, gt=0)
+    style_preset: str = Field(default="atlas", min_length=1, max_length=80)
+    radius: float = Field(default=1_000, gt=0)
+    max_context: int = Field(default=12, ge=1, le=100)
+    geometry_types: list[GeometryKind] = Field(
+        default_factory=lambda: [GeometryKind.LINE_STRING, GeometryKind.POLYGON],
+        min_length=1,
+    )
+    max_scenes: int = Field(default=500, ge=1, le=10_000)
+    skip_existing_targets: bool = True
+
+
+class SceneExtractionProposal(ApiModel):
+    target_feature_id: UUID
+    target_name: str
+    context_count: int
+    roles: dict[SceneRole, int]
+    viewport: dict[str, Any]
+    location_group: str
+
+
+class SceneExtractionPreview(ApiModel):
+    eligible_targets: int
+    proposed_scenes: int
+    isolated_targets: int
+    existing_targets: int
+    incompatible_features: int
+    role_counts: dict[SceneRole, int]
+    samples: list[SceneExtractionProposal]
+
+
 class JobRead(ApiModel):
     id: UUID
     kind: str

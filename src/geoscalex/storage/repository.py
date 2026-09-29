@@ -30,6 +30,7 @@ from geoscalex.domain import (
     RevisionCreate,
     RevisionRead,
     SceneCreate,
+    SceneExtractionCreate,
     SceneMemberRead,
     SceneRead,
     SceneReviewCreate,
@@ -588,6 +589,24 @@ async def enqueue_generator_run(
             "generator_version": version,
             "code_hash": code_hash,
         },
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+    return job_read(job)
+
+
+async def enqueue_scene_extraction(
+    session: AsyncSession, data: SceneExtractionCreate
+) -> JobRead:
+    await require(session, models.Dataset, data.dataset_id)
+    if data.target_batch_id is not None:
+        batch = await require(session, models.Batch, data.target_batch_id)
+        if batch.dataset_id != str(data.dataset_id):
+            raise ValueError("Target batch must belong to the extraction dataset")
+    job = models.Job(
+        kind="scene-extraction",
+        payload=data.model_dump(mode="json"),
     )
     session.add(job)
     await session.commit()

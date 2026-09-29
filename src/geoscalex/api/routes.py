@@ -28,6 +28,8 @@ from geoscalex.domain import (
     RevisionCreate,
     RevisionRead,
     SceneCreate,
+    SceneExtractionCreate,
+    SceneExtractionPreview,
     SceneRead,
     SceneReviewCreate,
     SceneReviewRead,
@@ -37,6 +39,7 @@ from geoscalex.domain import (
 from geoscalex.generators import generator_registry
 from geoscalex.generators.registry import GeneratorDefinition
 from geoscalex.geometry.analysis import GeometryValidationError
+from geoscalex.scenes.extraction import build_extraction_plan
 from geoscalex.storage import repository
 
 router = APIRouter()
@@ -245,6 +248,30 @@ async def create_scene_review(
 ) -> SceneReviewRead:
     try:
         return await repository.create_scene_review(session, data)
+    except LookupError as error:
+        raise not_found(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/scene-extractions/preview", response_model=SceneExtractionPreview)
+async def preview_scene_extraction(
+    data: SceneExtractionCreate, session: DatabaseSession
+) -> SceneExtractionPreview:
+    try:
+        return (await build_extraction_plan(session, data)).preview()
+    except LookupError as error:
+        raise not_found(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/scene-extractions", response_model=JobRead, status_code=202)
+async def create_scene_extraction(
+    data: SceneExtractionCreate, session: DatabaseSession
+) -> JobRead:
+    try:
+        return await repository.enqueue_scene_extraction(session, data)
     except LookupError as error:
         raise not_found(error) from error
     except ValueError as error:

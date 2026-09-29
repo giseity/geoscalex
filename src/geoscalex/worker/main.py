@@ -5,9 +5,16 @@ import logging
 
 from sqlalchemy import select
 
-from geoscalex.domain import BatchCreate, FeatureCreate, GeneratorRunCreate, utc_now
+from geoscalex.domain import (
+    BatchCreate,
+    FeatureCreate,
+    GeneratorRunCreate,
+    SceneExtractionCreate,
+    utc_now,
+)
 from geoscalex.generators import generator_registry
 from geoscalex.geometry.analysis import validate_geometry
+from geoscalex.scenes.extraction import build_extraction_plan
 from geoscalex.storage import models, repository
 from geoscalex.storage.db import Session, init_database
 
@@ -99,6 +106,56 @@ async def execute_generator_job(job_id: str) -> None:
         await session.commit()
 
 
+async def execute_scene_extraction_job(job_id: str) -> None:
+    async with Session() as session:
+        job = await repository.require(session, models.Job, job_id)
+        payload = SceneExtractionCreate.model_validate(job.payload)
+        plan = await build_extraction_plan(session, payload)
+        total = len(plan.scenes)
+        job.logs = [
+            *job.logs,
+            f"Planned {total} scenes from {plan.eligible_targets} eligible targets",
+        ]
+        await session.commit()
+        created: list[str] = []
+        for index, planned in enumerate(plan.scenes):
+            await session.refresh(job)
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.result = {
+                    "scene_ids": created,
+                    "created": len(created),
+                    "planned": total,
+                    "isolated_targets": plan.isolated_targets,
+                    "existing_targets": plan.existing_targets,
+                    "incompatible_features": plan.incompatible_features,
+                }
+                job.finished_at = utc_now()
+                job.logs = [*job.logs, f"Cancelled after {len(created)} scenes"]
+                await session.commit()
+                return
+            scene = await repository.create_scene(session, planned.create)
+            created.append(str(scene.id))
+            job.progress = (index + 1) / total if total else 1.0
+            if (index + 1) % 25 == 0 or index + 1 == total:
+                job.logs = [*job.logs, f"Created {index + 1}/{total} scenes"]
+            await session.commit()
+        job.progress = 1.0
+        job.status = "succeeded"
+        job.result = {
+            "scene_ids": created,
+            "created": len(created),
+            "planned": total,
+            "isolated_targets": plan.isolated_targets,
+            "existing_targets": plan.existing_targets,
+            "incompatible_features": plan.incompatible_features,
+            "role_counts": {role.value: count for role, count in plan.role_counts.items()},
+        }
+        job.finished_at = utc_now()
+        job.logs = [*job.logs, "Scene extraction completed"]
+        await session.commit()
+
+
 async def execute(job_id: str) -> None:
     try:
         async with Session() as session:
@@ -106,6 +163,8 @@ async def execute(job_id: str) -> None:
             kind = job.kind
         if kind == "generator-run":
             await execute_generator_job(job_id)
+        elif kind == "scene-extraction":
+            await execute_scene_extraction_job(job_id)
         else:
             raise ValueError(f"Unknown job kind: {kind}")
     except Exception as error:
