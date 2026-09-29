@@ -135,17 +135,17 @@ export function InspectorSidebar({
               <SidebarGroupLabel>Matched budget</SidebarGroupLabel>
               <SidebarGroupContent className="space-y-4 px-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1.5">
+                  <div className="min-w-0 space-y-1.5">
                     <Label>Candidate A</Label>
                     <Select onValueChange={onMethodAChange} value={methodA}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="w-full min-w-0"><SelectValue /></SelectTrigger>
                       <SelectContent>{methods.map((method) => <SelectItem disabled={!methodAllowed(method)} key={method.id} value={method.id}>{method.name}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="min-w-0 space-y-1.5">
                     <Label>Candidate B</Label>
                     <Select onValueChange={onMethodBChange} value={methodB}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="w-full min-w-0"><SelectValue /></SelectTrigger>
                       <SelectContent>{methods.map((method) => <SelectItem disabled={!methodAllowed(method)} key={method.id} value={method.id}>{method.name}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>

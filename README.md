@@ -23,6 +23,25 @@ Open <http://127.0.0.1:5173>. The API is available at
 
 Local state is stored under `.geoscalex/` and is intentionally ignored by Git.
 
+## Neural simplification experiment
+
+The classical methods and DeepSeek probe work without PyTorch. Install the optional ML dependencies
+only when training or running the purpose-built encoder:
+
+```bash
+uv sync --extra ml
+uv run geoscalex-train .geoscalex/exports/<dataset-id>/v1 \
+  --output .geoscalex/checkpoints/remove-move-v1.pt
+uv run geoscalex-evaluate .geoscalex/exports/<dataset-id>/v1 \
+  .geoscalex/checkpoints/remove-move-v1.pt \
+  --output .geoscalex/reports/remove-move-v1.json
+```
+
+Set `GEOSCALEX_ENCODER_CHECKPOINT` to the checkpoint path and restart the API and worker. The
+`encoder-remove-move` option then appears in the same matched-budget comparison UI as the
+classical and DeepSeek methods. Training is CPU-first by default; `--device cuda` is available
+when the installed PyTorch build and hardware support it.
+
 ## Checks
 
 ```bash
