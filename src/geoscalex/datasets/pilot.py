@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from geoscalex.datasets.audit import audit_export
-from geoscalex.datasets.io import publish_dataset
+from geoscalex.datasets.io import assign_split, publish_dataset
 from geoscalex.domain import BatchCreate, DatasetCreate, FeatureCreate, WorkspaceCreate
 from geoscalex.generators import generator_registry
 from geoscalex.storage import models, repository
@@ -40,6 +40,7 @@ class PilotConfig:
     group_size: int = 10
     workspace_name: str = "GeoScaleX research"
     dataset_name: str = "Synthetic pilot 1k"
+    require_family_coverage: bool = True
 
     def validate(self) -> None:
         if self.count < 12:
@@ -97,6 +98,23 @@ def _parameters(generator_id: str, stratum: str, rng: random.Random) -> dict[str
     raise LookupError(f"Pilot recipe does not support generator {generator_id}")
 
 
+def _covered_split_seed(
+    groups: dict[str, str], requested_seed: int, *, maximum_attempts: int = 50_000
+) -> int:
+    required = {"train", "validation", "test"}
+    families = set(groups.values())
+    for seed in range(requested_seed, requested_seed + maximum_attempts):
+        observed: dict[str, set[str]] = {family: set() for family in families}
+        for group, family in groups.items():
+            observed[family].add(assign_split(group, seed))
+        if all(splits == required for splits in observed.values()):
+            return seed
+    raise RuntimeError(
+        f"Could not find a family-covered split seed in {maximum_attempts} attempts; "
+        "decrease group_size or allow incomplete family splits"
+    )
+
+
 async def _workspace(session: AsyncSession, name: str) -> models.Workspace:
     existing = await session.scalar(
         select(models.Workspace).where(models.Workspace.name == name).order_by(models.Workspace.id)
@@ -132,6 +150,7 @@ async def build_pilot(
     counts["irregular-polygon"] = polygon_count
     created = 0
     batch_cache: dict[str, str] = {}
+    group_families: dict[str, str] = {}
 
     for generator_id, family_count in counts.items():
         entry = generator_registry.get(generator_id)
@@ -140,6 +159,7 @@ async def build_pilot(
             stratum_index = family_index // len(STRATA)
             group_index = stratum_index // config.group_size
             split_group = f"{RECIPE_VERSION}:{generator_id}:{stratum}:{group_index:04d}"
+            group_families[split_group] = generator_id
             batch_id = batch_cache.get(split_group)
             if batch_id is None:
                 batch = await repository.create_batch(
@@ -191,7 +211,12 @@ async def build_pilot(
             if progress is not None:
                 progress(created, config.count)
 
-    version = await publish_dataset(session, dataset.id, config.split_seed)
+    split_seed = (
+        _covered_split_seed(group_families, config.split_seed)
+        if config.require_family_coverage
+        else config.split_seed
+    )
+    version = await publish_dataset(session, dataset.id, split_seed)
     export_dir = Path(version.manifest_path).parent
     audit = audit_export(export_dir)
     audit_path = export_dir / "audit.json"
@@ -206,6 +231,8 @@ async def build_pilot(
         "feature_count": created,
         "line_count": line_count,
         "polygon_count": polygon_count,
+        "requested_split_seed": config.split_seed,
+        "resolved_split_seed": split_seed,
         "audit_ok": audit["ok"],
         "audit_warnings": audit["warnings"],
     }
@@ -221,6 +248,7 @@ async def _run(arguments: argparse.Namespace) -> dict[str, Any]:
         group_size=arguments.group_size,
         workspace_name=arguments.workspace,
         dataset_name=arguments.dataset_name,
+        require_family_coverage=not arguments.allow_incomplete_family_splits,
     )
     last_reported = 0
 
@@ -244,6 +272,7 @@ def main() -> None:
     parser.add_argument("--group-size", type=int, default=10)
     parser.add_argument("--workspace", default="GeoScaleX research")
     parser.add_argument("--dataset-name", default="Synthetic pilot 1k")
+    parser.add_argument("--allow-incomplete-family-splits", action="store_true")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     report = asyncio.run(_run(arguments))

@@ -193,6 +193,13 @@ def audit_export(export_dir: Path, *, model_vertex_limit: int = 512) -> dict[str
         missing = sorted({"train", "validation", "test"} - present)
         if missing:
             warnings.append(f"{geometry_type} is absent from splits: {', '.join(missing)}")
+    for generator in generator_counts:
+        present = {row["split"] for row in normalized_rows if row["generator"] == generator}
+        missing = sorted({"train", "validation", "test"} - present)
+        if missing:
+            warnings.append(
+                f"Generator family {generator} is absent from splits: {', '.join(missing)}"
+            )
     if features and model_eligible / len(features) < 0.9:
         warnings.append("Fewer than 90% of features are eligible for the initial encoder")
 

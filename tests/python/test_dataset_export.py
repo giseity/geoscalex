@@ -12,8 +12,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from geoscalex.config import settings
 from geoscalex.datasets.audit import audit_export
-from geoscalex.datasets.io import publish_dataset
-from geoscalex.datasets.pilot import LINE_GENERATORS, PilotConfig, build_pilot
+from geoscalex.datasets.io import assign_split, publish_dataset
+from geoscalex.datasets.pilot import (
+    LINE_GENERATORS,
+    PilotConfig,
+    _covered_split_seed,
+    build_pilot,
+)
 from geoscalex.domain import (
     DatasetCreate,
     FeatureCreate,
@@ -144,6 +149,22 @@ def test_dataset_audit_rejects_cross_split_duplicate_geometry(tmp_path: Path) ->
     assert report["features"]["cross_split_duplicates"] == 1
 
 
+def test_pilot_split_seed_covers_every_generator_family() -> None:
+    families = (*LINE_GENERATORS, "irregular-polygon")
+    groups = {
+        f"synthetic-pilot-v1:{family}:{index:03d}": family
+        for family in families
+        for index in range(24)
+    }
+    seed = _covered_split_seed(groups, 90_210)
+    for family in families:
+        assert {
+            assign_split(group, seed)
+            for group, group_family in groups.items()
+            if group_family == family
+        } == {"train", "validation", "test"}
+
+
 @pytest.mark.asyncio
 async def test_pilot_builder_creates_balanced_audited_export(tmp_path: Path) -> None:
     old_data_dir = settings.data_dir
@@ -162,6 +183,7 @@ async def test_pilot_builder_creates_balanced_audited_export(tmp_path: Path) -> 
                     group_size=1,
                     workspace_name="Pilot tests",
                     dataset_name="Balanced pilot",
+                    require_family_coverage=False,
                 ),
             )
         audit = audit_export(Path(result["manifest_path"]).parent)

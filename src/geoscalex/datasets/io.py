@@ -29,7 +29,7 @@ def _checksum(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _split(group: str, seed: int) -> str:
+def assign_split(group: str, seed: int) -> str:
     digest = hashlib.sha256(f"{seed}:{group}".encode()).digest()
     value = int.from_bytes(digest[:8], "big") / 2**64
     if value < 0.8:
@@ -72,7 +72,7 @@ async def publish_dataset(
         vw = hierarchy_scores(revision.geometry_geojson, "visvalingam-whyatt")
         metrics = analyze_geometry(revision.geometry_geojson)
         split_group = str(revision.properties.get("split_group") or feature.batch_id or feature.id)
-        split = _split(split_group, split_seed)
+        split = assign_split(split_group, split_seed)
         rows.append(
             {
                 "feature_id": feature.id,
@@ -212,7 +212,7 @@ async def publish_dataset(
         if target is None or scene_target_revision is None:
             raise ValueError(f"Scene {scene.name!r} has an archived target")
         split_group = str(scene.provenance.get("location_group") or target.batch_id or scene.id)
-        split = _split(split_group, split_seed)
+        split = assign_split(split_group, split_seed)
         scene_rows.append(
             {
                 "scene_id": scene.id,
