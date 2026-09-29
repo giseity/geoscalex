@@ -1,8 +1,18 @@
-import { useId } from "react"
+import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import { LocateFixed, Minus, Plus } from "lucide-react"
 
 import type { Geometry } from "@/lib/api"
 import { geometryPaths, projectionFor } from "@/lib/geometry"
 import { cn } from "@/lib/utils"
+
+export const ORIGINAL_COLOR = "#66736f"
+export const CANDIDATE_A_COLOR = "#d85f36"
+export const CANDIDATE_B_COLOR = "#2563a8"
+
+const VIEWBOX_WIDTH = 1000
+const VIEWBOX_HEIGHT = 620
+const MIN_ZOOM = 1
+const MAX_ZOOM = 8
 
 type GeometryLayerProps = {
   geometry?: Geometry
@@ -42,10 +52,9 @@ type GeometryStageProps = {
   context?: ContextGeometry[]
   mode: "swipe" | "overlay"
   swipe: number
+  onSwipeChange?: (value: number) => void
   className?: string
   comparisonLabels?: boolean
-  leftLabel?: string
-  rightLabel?: string
 }
 
 export type ContextGeometry = {
@@ -63,6 +72,10 @@ const roleColors: Record<ContextGeometry["role"], string> = {
   obstacle: "#b45f48",
 }
 
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value))
+}
+
 export function GeometryStage({
   original,
   left,
@@ -70,12 +83,16 @@ export function GeometryStage({
   context = [],
   mode,
   swipe,
+  onSwipeChange,
   className,
-  comparisonLabels = true,
-  leftLabel = "Candidate A",
-  rightLabel = "Candidate B",
 }: GeometryStageProps) {
   const clipId = useId().replaceAll(":", "")
+  const stageRef = useRef<HTMLDivElement>(null)
+  const panOrigin = useRef<{ x: number; y: number } | null>(null)
+  const zoomRef = useRef(1)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [panning, setPanning] = useState(false)
   const projection = projectionFor([original, left, right, ...context.map((item) => item.geometry)])
 
   const layer = (geometry: Geometry | undefined, color: string, dotted = false) => {
@@ -97,25 +114,105 @@ export function GeometryStage({
     ))
   }
 
+  function viewPoint(clientX: number, clientY: number) {
+    const bounds = stageRef.current?.getBoundingClientRect()
+    if (!bounds) return { x: VIEWBOX_WIDTH / 2, y: VIEWBOX_HEIGHT / 2 }
+    return {
+      x: ((clientX - bounds.left) / bounds.width) * VIEWBOX_WIDTH,
+      y: ((clientY - bounds.top) / bounds.height) * VIEWBOX_HEIGHT,
+    }
+  }
+
+  function zoomAt(nextZoom: number | ((current: number) => number), point = { x: VIEWBOX_WIDTH / 2, y: VIEWBOX_HEIGHT / 2 }) {
+    const currentZoom = zoomRef.current
+    const requestedZoom = typeof nextZoom === "function" ? nextZoom(currentZoom) : nextZoom
+    const clampedZoom = clamp(requestedZoom, MIN_ZOOM, MAX_ZOOM)
+    if (clampedZoom === currentZoom) return
+    const ratio = clampedZoom / currentZoom
+    zoomRef.current = clampedZoom
+    setPan((current) => ({
+      x: point.x - (point.x - current.x) * ratio,
+      y: point.y - (point.y - current.y) * ratio,
+    }))
+    setZoom(clampedZoom)
+  }
+
+  function resetViewport() {
+    zoomRef.current = 1
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const factor = event.deltaY < 0 ? 1.18 : 1 / 1.18
+      zoomAt((current) => current * factor, viewPoint(event.clientX, event.clientY))
+    }
+    stage.addEventListener("wheel", handleWheel, { passive: false })
+    return () => stage.removeEventListener("wheel", handleWheel)
+  }, [])
+
+  function startPan(event: ReactPointerEvent<SVGSVGElement>) {
+    if (event.button !== 0) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    panOrigin.current = viewPoint(event.clientX, event.clientY)
+    setPanning(true)
+  }
+
+  function movePan(event: ReactPointerEvent<SVGSVGElement>) {
+    if (!panOrigin.current || !panning) return
+    const point = viewPoint(event.clientX, event.clientY)
+    const deltaX = point.x - panOrigin.current.x
+    const deltaY = point.y - panOrigin.current.y
+    panOrigin.current = point
+    setPan((current) => ({ x: current.x + deltaX, y: current.y + deltaY }))
+  }
+
+  function stopPan() {
+    panOrigin.current = null
+    setPanning(false)
+  }
+
+  function updateSwipe(clientX: number) {
+    const bounds = stageRef.current?.getBoundingClientRect()
+    if (!bounds || !onSwipeChange) return
+    onSwipeChange(clamp(((clientX - bounds.left) / bounds.width) * 100, 0, 100))
+  }
+
+  const transform = `translate(${pan.x} ${pan.y}) scale(${zoom})`
+
   return (
     <div
       className={cn(
-        "geometry-stage relative min-h-80 overflow-hidden rounded-xl border bg-[#f3f0e7] shadow-inner",
+        "geometry-stage relative min-h-80 touch-none overflow-hidden rounded-xl border bg-[#f3f0e7] shadow-inner",
         className,
       )}
       data-testid="geometry-stage"
+      ref={stageRef}
     >
-      <svg aria-label="Geometry comparison" className="absolute inset-0 h-full w-full" viewBox="0 0 1000 620">
+      <svg
+        aria-label="Geometry comparison"
+        className={cn("absolute inset-0 h-full w-full", panning ? "cursor-grabbing" : "cursor-grab")}
+        onDoubleClick={resetViewport}
+        onPointerCancel={stopPan}
+        onPointerDown={startPan}
+        onPointerMove={movePan}
+        onPointerUp={stopPan}
+        viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+      >
         <defs>
           <pattern id={`${clipId}-grid`} width="40" height="40" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#d9d5ca" strokeWidth="1" />
           </pattern>
           <clipPath id={`${clipId}-left`}>
-            <rect height="620" width={swipe * 10} x="0" y="0" />
+            <rect height={VIEWBOX_HEIGHT} width={(swipe / 100) * VIEWBOX_WIDTH} x="0" y="0" />
           </clipPath>
         </defs>
-        <rect fill={`url(#${clipId}-grid)`} height="620" width="1000" />
-        <g>
+        <rect fill={`url(#${clipId}-grid)`} height={VIEWBOX_HEIGHT} width={VIEWBOX_WIDTH} />
+        <g transform={transform}>
           {context.map((item, contextIndex) => {
             const configuredColor = item.style?.color
             const color = typeof configuredColor === "string" ? configuredColor : roleColors[item.role]
@@ -135,40 +232,63 @@ export function GeometryStage({
               />
             ))
           })}
+          <g opacity="0.48">{layer(original, ORIGINAL_COLOR, true)}</g>
         </g>
-        <g opacity="0.45">{layer(original, "#59635f", true)}</g>
         {mode === "overlay" ? (
-          <>
-            <g>{layer(left, "#db5e37")}</g>
-            <g>{layer(right, "#007f75")}</g>
-          </>
+          <g transform={transform}>
+            <g>{layer(left, CANDIDATE_A_COLOR)}</g>
+            <g>{layer(right, CANDIDATE_B_COLOR)}</g>
+          </g>
         ) : (
           <>
-            <g>{layer(right, "#007f75")}</g>
-            <g clipPath={`url(#${clipId}-left)`}>{layer(left, "#db5e37")}</g>
-            <line
-              stroke="#26322e"
-              strokeWidth="3"
-              vectorEffect="non-scaling-stroke"
-              x1={swipe * 10}
-              x2={swipe * 10}
-              y1="0"
-              y2="620"
-            />
-            <circle cx={swipe * 10} cy="310" fill="#26322e" r="18" />
-            <path
-              d={`M${swipe * 10 - 7},310 l6,-6 v12 z M${swipe * 10 + 7},310 l-6,-6 v12 z`}
-              fill="white"
-            />
+            <g transform={transform}>{layer(right, CANDIDATE_B_COLOR)}</g>
+            <g clipPath={`url(#${clipId}-left)`}>
+              <g transform={transform}>{layer(left, CANDIDATE_A_COLOR)}</g>
+            </g>
           </>
         )}
       </svg>
-      {comparisonLabels && (
-        <div className="pointer-events-none absolute inset-x-4 top-4 flex justify-between text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700">
-          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">A · {leftLabel}</span>
-          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">B · {rightLabel}</span>
+
+      <div className="absolute right-3 top-3 z-30 flex items-center gap-1 rounded-lg border bg-background/92 p-1 shadow-sm backdrop-blur">
+        <button aria-label="Zoom out" className="grid size-8 place-items-center rounded-md text-foreground hover:bg-muted disabled:opacity-40" disabled={zoom <= MIN_ZOOM} onClick={() => zoomAt((current) => current / 1.35)} type="button"><Minus className="size-4" /></button>
+        <span className="min-w-12 text-center text-[11px] font-semibold tabular-nums text-muted-foreground">{Math.round(zoom * 100)}%</span>
+        <button aria-label="Zoom in" className="grid size-8 place-items-center rounded-md text-foreground hover:bg-muted disabled:opacity-40" disabled={zoom >= MAX_ZOOM} onClick={() => zoomAt((current) => current * 1.35)} type="button"><Plus className="size-4" /></button>
+        <button aria-label="Fit geometry" className="grid size-8 place-items-center rounded-md text-foreground hover:bg-muted" onClick={resetViewport} title="Fit geometry" type="button"><LocateFixed className="size-4" /></button>
+      </div>
+
+      {mode === "swipe" && onSwipeChange && (
+        <div
+          aria-label="Comparison divider"
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={Math.round(swipe)}
+          className="group absolute inset-y-0 z-20 w-10 -translate-x-1/2 cursor-col-resize touch-none focus:outline-none"
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") onSwipeChange(clamp(swipe - (event.shiftKey ? 10 : 2), 0, 100))
+            if (event.key === "ArrowRight") onSwipeChange(clamp(swipe + (event.shiftKey ? 10 : 2), 0, 100))
+            if (event.key === "Home") onSwipeChange(0)
+            if (event.key === "End") onSwipeChange(100)
+          }}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId)
+            updateSwipe(event.clientX)
+          }}
+          onPointerMove={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) updateSwipe(event.clientX)
+          }}
+          role="slider"
+          style={{ left: `${swipe}%` }}
+          tabIndex={0}
+        >
+          <span className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-slate-800 shadow-[0_0_0_1px_rgba(255,255,255,0.55)] transition group-focus:w-1" />
+          <span className="absolute left-1/2 top-1/2 grid h-12 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-slate-800 text-white shadow-lg transition-transform group-hover:scale-105 group-focus:scale-105">
+            <span className="flex gap-1"><i className="h-3 w-px bg-white/75" /><i className="h-3 w-px bg-white/75" /></span>
+          </span>
         </div>
       )}
+      <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-background/80 px-2 py-1 text-[10px] font-medium text-muted-foreground shadow-sm backdrop-blur">
+        Scroll to zoom · drag to pan · double-click to fit
+      </div>
     </div>
   )
 }

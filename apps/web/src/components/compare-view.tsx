@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react"
 import { Check, GitCompareArrows, Layers2, Save, ScanLine, TriangleAlert } from "lucide-react"
 
-import { GeometryStage, type ContextGeometry } from "@/components/geometry-stage"
+import {
+  CANDIDATE_A_COLOR,
+  CANDIDATE_B_COLOR,
+  GeometryStage,
+  ORIGINAL_COLOR,
+  type ContextGeometry,
+} from "@/components/geometry-stage"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import type { Acceptability, FailureTag, Scene } from "@/lib/api"
 import type { AnnotationChoice, Candidate, Feature, ReviewDraft } from "@/lib/api-extra"
+import { vertexCount } from "@/lib/geometry"
 
 type CompareViewProps = {
   feature?: Feature
@@ -29,6 +35,29 @@ const failureOptions: Array<{ value: FailureTag; label: string }> = [
   { value: "context-inconsistency", label: "Context" },
   { value: "displacement-needed", label: "Needs displacement" },
 ]
+
+function CandidateIdentity({
+  candidate,
+  color,
+  label,
+  name,
+}: {
+  candidate?: Candidate
+  color: string
+  label: string
+  name?: string
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-3 rounded-lg border bg-background px-3 py-2 shadow-sm">
+      <span aria-hidden className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+      <span className="grid size-6 shrink-0 place-items-center rounded-md text-xs font-bold text-white" style={{ backgroundColor: color }}>{label}</span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold">{name ?? candidate?.method ?? `Candidate ${label}`}</span>
+        <span className="block text-[11px] text-muted-foreground">{candidate ? `${vertexCount(candidate.geometry)} vertices` : "Not built"}</span>
+      </span>
+    </div>
+  )
+}
 
 export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate, labelA, labelB }: CompareViewProps) {
   const [mode, setMode] = useState<"swipe" | "overlay">("swipe")
@@ -122,22 +151,23 @@ export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate
         <CardContent className="flex h-full min-h-[470px] flex-col p-0">
           {ready ? (
             <>
+              <div className="grid gap-2 border-b bg-muted/25 p-3 sm:grid-cols-[1fr_auto_1fr]">
+                <CandidateIdentity candidate={candidateA} color={CANDIDATE_A_COLOR} label="A" name={labelA} />
+                <div className="flex items-center justify-center gap-2 px-2 text-[11px] font-medium text-muted-foreground">
+                  <span className="h-0 w-5 border-t-2 border-dashed" style={{ borderColor: ORIGINAL_COLOR }} /> Original · {vertexCount(feature.current_revision.geometry)}
+                </div>
+                <CandidateIdentity candidate={candidateB} color={CANDIDATE_B_COLOR} label="B" name={labelB} />
+              </div>
               <GeometryStage
                 className="min-h-[430px] flex-1 rounded-none border-0"
                 context={context}
                 left={candidateA?.geometry}
-                leftLabel={labelA ?? candidateA?.method}
                 mode={mode}
+                onSwipeChange={setSwipe}
                 original={feature.current_revision.geometry}
                 right={candidateB?.geometry}
-                rightLabel={labelB ?? candidateB?.method}
                 swipe={swipe}
               />
-              {mode === "swipe" && (
-                <div className="border-t bg-card px-6 py-4">
-                  <Slider aria-label="Swipe position" max={100} min={0} onValueChange={([value]) => setSwipe(value)} value={[swipe]} />
-                </div>
-              )}
             </>
           ) : (
             <div className="grid min-h-[470px] flex-1 place-content-center bg-[#f3f0e7] px-6 text-center">
@@ -155,6 +185,7 @@ export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate
             <span className="mr-auto pl-1 text-sm font-medium">Which result is more acceptable?</span>
             {(["A", "B", "equal", "artifact"] as const).map((item) => (
               <Button
+                className={choice === item && item === "A" ? "bg-[#d85f36] hover:bg-[#bd4f2b]" : choice === item && item === "B" ? "bg-[#2563a8] hover:bg-[#1f558e]" : undefined}
                 disabled={pending}
                 key={item}
                 onClick={() => annotate(item)}
