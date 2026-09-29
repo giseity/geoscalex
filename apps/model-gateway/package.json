@@ -1,7 +1,7 @@
 {
   "name": "@geoscalex/model-gateway",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --watch --import tsx src/main.ts",
