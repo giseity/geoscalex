@@ -90,10 +90,15 @@ export function GeometryStage({
   const stageRef = useRef<HTMLDivElement>(null)
   const panOrigin = useRef<{ x: number; y: number } | null>(null)
   const zoomRef = useRef(1)
+  const viewportRef = useRef({ width: VIEWBOX_WIDTH, height: VIEWBOX_HEIGHT })
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [panning, setPanning] = useState(false)
-  const projection = projectionFor([original, left, right, ...context.map((item) => item.geometry)])
+  const [viewport, setViewport] = useState(viewportRef.current)
+  const projection = projectionFor(
+    [original, left, right, ...context.map((item) => item.geometry)],
+    { ...viewport, padding: Math.min(64, viewport.width * 0.08) },
+  )
 
   const layer = (geometry: Geometry | undefined, color: string, dotted = false) => {
     if (!geometry) return null
@@ -116,14 +121,17 @@ export function GeometryStage({
 
   function viewPoint(clientX: number, clientY: number) {
     const bounds = stageRef.current?.getBoundingClientRect()
-    if (!bounds) return { x: VIEWBOX_WIDTH / 2, y: VIEWBOX_HEIGHT / 2 }
+    const currentViewport = viewportRef.current
+    if (!bounds) return { x: currentViewport.width / 2, y: currentViewport.height / 2 }
     return {
-      x: ((clientX - bounds.left) / bounds.width) * VIEWBOX_WIDTH,
-      y: ((clientY - bounds.top) / bounds.height) * VIEWBOX_HEIGHT,
+      x: ((clientX - bounds.left) / bounds.width) * currentViewport.width,
+      y: ((clientY - bounds.top) / bounds.height) * currentViewport.height,
     }
   }
 
-  function zoomAt(nextZoom: number | ((current: number) => number), point = { x: VIEWBOX_WIDTH / 2, y: VIEWBOX_HEIGHT / 2 }) {
+  function zoomAt(nextZoom: number | ((current: number) => number), point?: { x: number; y: number }) {
+    const currentViewport = viewportRef.current
+    const zoomPoint = point ?? { x: currentViewport.width / 2, y: currentViewport.height / 2 }
     const currentZoom = zoomRef.current
     const requestedZoom = typeof nextZoom === "function" ? nextZoom(currentZoom) : nextZoom
     const clampedZoom = clamp(requestedZoom, MIN_ZOOM, MAX_ZOOM)
@@ -131,8 +139,8 @@ export function GeometryStage({
     const ratio = clampedZoom / currentZoom
     zoomRef.current = clampedZoom
     setPan((current) => ({
-      x: point.x - (point.x - current.x) * ratio,
-      y: point.y - (point.y - current.y) * ratio,
+      x: zoomPoint.x - (zoomPoint.x - current.x) * ratio,
+      y: zoomPoint.y - (zoomPoint.y - current.y) * ratio,
     }))
     setZoom(clampedZoom)
   }
@@ -142,6 +150,22 @@ export function GeometryStage({
     setZoom(1)
     setPan({ x: 0, y: 0 })
   }
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage || typeof ResizeObserver === "undefined") return
+    const updateViewport = () => {
+      const bounds = stage.getBoundingClientRect()
+      if (!bounds.width || !bounds.height) return
+      const next = { width: VIEWBOX_HEIGHT * (bounds.width / bounds.height), height: VIEWBOX_HEIGHT }
+      viewportRef.current = next
+      setViewport((current) => Math.abs(current.width - next.width) < 0.5 ? current : next)
+    }
+    updateViewport()
+    const observer = new ResizeObserver(updateViewport)
+    observer.observe(stage)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const stage = stageRef.current
@@ -201,17 +225,17 @@ export function GeometryStage({
         onPointerDown={startPan}
         onPointerMove={movePan}
         onPointerUp={stopPan}
-        viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+        viewBox={`0 0 ${viewport.width} ${viewport.height}`}
       >
         <defs>
           <pattern id={`${clipId}-grid`} width="40" height="40" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#d9d5ca" strokeWidth="1" />
           </pattern>
           <clipPath id={`${clipId}-left`}>
-            <rect height={VIEWBOX_HEIGHT} width={(swipe / 100) * VIEWBOX_WIDTH} x="0" y="0" />
+            <rect height={viewport.height} width={(swipe / 100) * viewport.width} x="0" y="0" />
           </clipPath>
         </defs>
-        <rect fill={`url(#${clipId}-grid)`} height={VIEWBOX_HEIGHT} width={VIEWBOX_WIDTH} />
+        <rect fill={`url(#${clipId}-grid)`} height={viewport.height} width={viewport.width} />
         <g transform={transform}>
           {context.map((item, contextIndex) => {
             const configuredColor = item.style?.color

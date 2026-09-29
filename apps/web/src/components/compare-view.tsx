@@ -48,12 +48,11 @@ function CandidateIdentity({
   name?: string
 }) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-3 rounded-lg border bg-background px-3 py-2 shadow-sm">
-      <span aria-hidden className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-      <span className="grid size-6 shrink-0 place-items-center rounded-md text-xs font-bold text-white" style={{ backgroundColor: color }}>{label}</span>
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold">{name ?? candidate?.method ?? `Candidate ${label}`}</span>
-        <span className="block text-[11px] text-muted-foreground">{candidate ? `${vertexCount(candidate.geometry)} vertices` : "Not built"}</span>
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="grid size-5 shrink-0 place-items-center rounded text-[10px] font-bold text-white" style={{ backgroundColor: color }}>{label}</span>
+      <span className="min-w-0 truncate text-xs font-semibold">
+        {name ?? candidate?.method ?? `Candidate ${label}`}
+        <span className="ml-1.5 font-normal text-muted-foreground">· {candidate ? `${vertexCount(candidate.geometry)} vertices` : "not built"}</span>
       </span>
     </div>
   )
@@ -151,10 +150,10 @@ export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate
         <CardContent className="flex h-full min-h-[470px] flex-col p-0">
           {ready ? (
             <>
-              <div className="grid gap-2 border-b bg-muted/25 p-3 sm:grid-cols-[1fr_auto_1fr]">
+              <div className="flex min-h-11 items-center gap-3 border-b bg-background px-3 py-2">
                 <CandidateIdentity candidate={candidateA} color={CANDIDATE_A_COLOR} label="A" name={labelA} />
-                <div className="flex items-center justify-center gap-2 px-2 text-[11px] font-medium text-muted-foreground">
-                  <span className="h-0 w-5 border-t-2 border-dashed" style={{ borderColor: ORIGINAL_COLOR }} /> Original · {vertexCount(feature.current_revision.geometry)}
+                <div className="hidden shrink-0 items-center justify-center gap-1.5 text-[10px] font-medium text-muted-foreground sm:flex">
+                  <span className="h-0 w-4 border-t-2 border-dashed" style={{ borderColor: ORIGINAL_COLOR }} /> Original · {vertexCount(feature.current_revision.geometry)}
                 </div>
                 <CandidateIdentity candidate={candidateB} color={CANDIDATE_B_COLOR} label="B" name={labelB} />
               </div>
@@ -168,6 +167,34 @@ export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate
                 right={candidateB?.geometry}
                 swipe={swipe}
               />
+              <div className="border-t bg-background">
+                <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+                  <span className="mr-auto text-sm font-medium">Which result is better?</span>
+                  {(["A", "B", "equal", "artifact"] as const).map((item) => (
+                    <Button
+                      className={choice === item && item === "A" ? "bg-[#d85f36] hover:bg-[#bd4f2b]" : choice === item && item === "B" ? "bg-[#2563a8] hover:bg-[#1f558e]" : undefined}
+                      disabled={pending}
+                      key={item}
+                      onClick={() => annotate(item)}
+                      size="sm"
+                      variant={choice === item ? "default" : "outline"}
+                    >
+                      {choice === item && <Check />}
+                      {item === "equal" ? "Equal" : item === "artifact" ? "Artifact" : `Prefer ${item}`}
+                    </Button>
+                  ))}
+                </div>
+                {scene && (
+                  <div className="grid gap-3 border-t px-3 py-3 lg:grid-cols-[1fr_1.3fr]">
+                    <div className="space-y-3">
+                      <div><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall acceptability</p><div className="flex flex-wrap gap-2">{(["acceptable", "unacceptable", "unsure"] as const).map((value) => <Button key={value} onClick={() => setAcceptability(value)} size="sm" variant={acceptability === value ? "secondary" : "outline"}>{value.charAt(0).toUpperCase() + value.slice(1)}</Button>)}</div></div>
+                      <div><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Observed failures</p><div className="flex flex-wrap gap-2">{failureOptions.map((option) => { const active = failureTags.includes(option.value); return <Button key={option.value} onClick={() => setFailureTags((tags) => active ? tags.filter((tag) => tag !== option.value) : [...tags, option.value])} size="sm" variant={active ? "secondary" : "outline"}>{active && <Check />}{option.label}</Button> })}</div></div>
+                    </div>
+                    <div className="flex min-w-0 flex-col gap-2"><Textarea aria-label="Review comment" className="min-h-24 flex-1" onChange={(event) => setComment(event.target.value)} placeholder="Optional note about context, characteristic shape, or required displacement…" value={comment} /><Button className="self-end" disabled={!choice || pending} onClick={saveSceneReview}><Save /> {pending ? "Saving…" : "Save scene review"}</Button></div>
+                  </div>
+                )}
+                {reviewError && <p className="border-t px-3 py-2 text-sm text-destructive">{reviewError}</p>}
+              </div>
             </>
           ) : (
             <div className="grid min-h-[470px] flex-1 place-content-center bg-[#f3f0e7] px-6 text-center">
@@ -178,37 +205,6 @@ export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate
           )}
         </CardContent>
       </Card>
-
-      {ready && (
-        <div className="space-y-3 rounded-xl border bg-card p-3 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-auto pl-1 text-sm font-medium">Which result is more acceptable?</span>
-            {(["A", "B", "equal", "artifact"] as const).map((item) => (
-              <Button
-                className={choice === item && item === "A" ? "bg-[#d85f36] hover:bg-[#bd4f2b]" : choice === item && item === "B" ? "bg-[#2563a8] hover:bg-[#1f558e]" : undefined}
-                disabled={pending}
-                key={item}
-                onClick={() => annotate(item)}
-                size="sm"
-                variant={choice === item ? "default" : "outline"}
-              >
-                {choice === item && <Check />}
-                {item === "equal" ? "Equal" : item === "artifact" ? "Artifact" : `Prefer ${item}`}
-              </Button>
-            ))}
-          </div>
-          {scene && (
-            <div className="grid gap-3 border-t pt-3 lg:grid-cols-[1fr_1.3fr]">
-              <div className="space-y-3">
-                <div><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall acceptability</p><div className="flex flex-wrap gap-2">{(["acceptable", "unacceptable", "unsure"] as const).map((value) => <Button key={value} onClick={() => setAcceptability(value)} size="sm" variant={acceptability === value ? "secondary" : "outline"}>{value.charAt(0).toUpperCase() + value.slice(1)}</Button>)}</div></div>
-                <div><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Observed failures</p><div className="flex flex-wrap gap-2">{failureOptions.map((option) => { const active = failureTags.includes(option.value); return <Button key={option.value} onClick={() => setFailureTags((tags) => active ? tags.filter((tag) => tag !== option.value) : [...tags, option.value])} size="sm" variant={active ? "secondary" : "outline"}>{active && <Check />}{option.label}</Button> })}</div></div>
-              </div>
-              <div className="flex min-w-0 flex-col gap-2"><Textarea aria-label="Review comment" className="min-h-24 flex-1" onChange={(event) => setComment(event.target.value)} placeholder="Optional note about context, characteristic shape, or required displacement…" value={comment} /><Button className="self-end" disabled={!choice || pending} onClick={saveSceneReview}><Save /> {pending ? "Saving…" : "Save scene review"}</Button></div>
-            </div>
-          )}
-          {reviewError && <p className="text-sm text-destructive">{reviewError}</p>}
-        </div>
-      )}
     </div>
   )
 }

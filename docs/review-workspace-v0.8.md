@@ -28,11 +28,16 @@ The comparison canvas has one direct-manipulation model:
 
 - In swipe mode, the divider itself is draggable and keyboard accessible. There is no second slider.
 - Candidate A is consistently orange and candidate B consistently blue. Their color swatches,
-  method names, and achieved vertex counts live together outside the drawing area.
+  method names, and achieved vertex counts live in a compact header outside the drawing area.
 - The original geometry remains a neutral dashed reference, described in the legend.
 - Wheel or buttons zoom the viewport, dragging the canvas pans it, and reset restores the fitted
   extent. View transforms never modify source or candidate coordinates.
+- The SVG view box follows the rendered stage aspect ratio. The grid therefore reaches every edge
+  without horizontally stretching the geometries.
 - Overlay mode uses the same identity and viewport controls without displaying a divider.
+
+The comparison decision is the footer of the same surface rather than a separate card. Contextual
+review details expand beneath that footer while retaining the candidate legend and canvas above.
 
 The divider clips in screen space while all geometry layers share one viewport transform. This makes
 the before/after boundary stable while a reviewer zooms or pans.

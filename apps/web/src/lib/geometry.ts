@@ -5,9 +5,9 @@ export type Projection = {
   inverse: (position: Position) => Position
 }
 
-const WIDTH = 1000
-const HEIGHT = 620
-const PADDING = 64
+const DEFAULT_WIDTH = 1000
+const DEFAULT_HEIGHT = 620
+const DEFAULT_PADDING = 64
 
 export function geometryPositions(geometry?: Geometry): Position[] {
   if (!geometry) return []
@@ -21,12 +21,18 @@ export function vertexCount(geometry?: Geometry): number {
   return geometry.coordinates.reduce((count, ring) => count + Math.max(0, ring.length - 1), 0)
 }
 
-export function projectionFor(geometries: Array<Geometry | undefined>): Projection {
+export function projectionFor(
+  geometries: Array<Geometry | undefined>,
+  options: { width?: number; height?: number; padding?: number } = {},
+): Projection {
+  const width = options.width ?? DEFAULT_WIDTH
+  const height = options.height ?? DEFAULT_HEIGHT
+  const padding = options.padding ?? DEFAULT_PADDING
   const positions = geometries.flatMap(geometryPositions)
   if (!positions.length) {
     return {
-      point: ([x, y]) => [PADDING + (x / 100) * (WIDTH - PADDING * 2), HEIGHT - PADDING - (y / 100) * (HEIGHT - PADDING * 2)],
-      inverse: ([x, y]) => [((x - PADDING) / (WIDTH - PADDING * 2)) * 100, ((HEIGHT - PADDING - y) / (HEIGHT - PADDING * 2)) * 100],
+      point: ([x, y]) => [padding + (x / 100) * (width - padding * 2), height - padding - (y / 100) * (height - padding * 2)],
+      inverse: ([x, y]) => [((x - padding) / (width - padding * 2)) * 100, ((height - padding - y) / (height - padding * 2)) * 100],
     }
   }
   const xs = positions.map(([x]) => x)
@@ -37,12 +43,12 @@ export function projectionFor(geometries: Array<Geometry | undefined>): Projecti
   const maxY = Math.max(...ys)
   const spanX = Math.max(maxX - minX, 1e-6)
   const spanY = Math.max(maxY - minY, 1e-6)
-  const scale = Math.min((WIDTH - PADDING * 2) / spanX, (HEIGHT - PADDING * 2) / spanY)
-  const offsetX = (WIDTH - spanX * scale) / 2
-  const offsetY = (HEIGHT - spanY * scale) / 2
+  const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY)
+  const offsetX = (width - spanX * scale) / 2
+  const offsetY = (height - spanY * scale) / 2
   return {
-    point: ([x, y]) => [offsetX + (x - minX) * scale, HEIGHT - offsetY - (y - minY) * scale],
-    inverse: ([x, y]) => [(x - offsetX) / scale + minX, (HEIGHT - offsetY - y) / scale + minY],
+    point: ([x, y]) => [offsetX + (x - minX) * scale, height - offsetY - (y - minY) * scale],
+    inverse: ([x, y]) => [(x - offsetX) / scale + minX, (height - offsetY - y) / scale + minY],
   }
 }
 
