@@ -85,5 +85,6 @@ See [the Dataset Lab architecture](docs/dataset-lab-v0.1.md), the
 [quality-selected supervision findings](docs/pilot-findings-v0.6.md), the
 [real-data pilot v0.7 contract](docs/real-data-pilot-v0.7.md), the
 [real-data pilot findings](docs/pilot-findings-v0.7.md), the
+[review workspace v0.8 contract](docs/review-workspace-v0.8.md), the
 [real-data source shortlist](docs/real-data-sources-v0.5.md), and the
 [research proposal](adaptive-neural-gis-generalization.md).
