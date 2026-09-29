@@ -27,6 +27,10 @@ from geoscalex.domain import (
     JobRead,
     RevisionCreate,
     RevisionRead,
+    SceneCreate,
+    SceneRead,
+    SceneReviewCreate,
+    SceneReviewRead,
     WorkspaceCreate,
     WorkspaceRead,
 )
@@ -197,6 +201,64 @@ async def create_annotation(data: AnnotationCreate, session: DatabaseSession) ->
         raise not_found(error) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/scenes", response_model=SceneRead, status_code=201)
+async def create_scene(data: SceneCreate, session: DatabaseSession) -> SceneRead:
+    try:
+        return await repository.create_scene(session, data)
+    except LookupError as error:
+        raise not_found(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/datasets/{dataset_id}/scenes", response_model=list[SceneRead])
+async def scenes(
+    dataset_id: UUID, session: DatabaseSession, include_archived: bool = False
+) -> list[SceneRead]:
+    try:
+        return await repository.list_scenes(session, dataset_id, include_archived)
+    except LookupError as error:
+        raise not_found(error) from error
+
+
+@router.get("/scenes/{scene_id}", response_model=SceneRead)
+async def scene(scene_id: UUID, session: DatabaseSession) -> SceneRead:
+    try:
+        return await repository.get_scene(session, scene_id)
+    except LookupError as error:
+        raise not_found(error) from error
+
+
+@router.post("/scenes/{scene_id}/archive", response_model=SceneRead)
+async def archive_scene(scene_id: UUID, session: DatabaseSession) -> SceneRead:
+    try:
+        return await repository.set_scene_archived(session, scene_id, True)
+    except LookupError as error:
+        raise not_found(error) from error
+
+
+@router.post("/scene-reviews", response_model=SceneReviewRead, status_code=201)
+async def create_scene_review(
+    data: SceneReviewCreate, session: DatabaseSession
+) -> SceneReviewRead:
+    try:
+        return await repository.create_scene_review(session, data)
+    except LookupError as error:
+        raise not_found(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/scenes/{scene_id}/reviews", response_model=list[SceneReviewRead])
+async def scene_reviews(
+    scene_id: UUID, session: DatabaseSession
+) -> list[SceneReviewRead]:
+    try:
+        return await repository.list_scene_reviews(session, scene_id)
+    except LookupError as error:
+        raise not_found(error) from error
 
 
 @router.post("/candidates", response_model=CandidateRead, status_code=201)

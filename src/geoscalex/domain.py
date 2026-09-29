@@ -37,6 +37,36 @@ class AnnotationChoice(StrEnum):
     ARTIFACT = "artifact"
 
 
+class SceneRegion(StrEnum):
+    EUROPE = "europe"
+    NORTH_AMERICA = "north-america"
+    OTHER = "other"
+
+
+class SceneRole(StrEnum):
+    TARGET = "target"
+    SIBLING = "sibling"
+    PARENT = "parent"
+    CHILD = "child"
+    BACKGROUND = "background"
+    OBSTACLE = "obstacle"
+
+
+class Acceptability(StrEnum):
+    ACCEPTABLE = "acceptable"
+    UNACCEPTABLE = "unacceptable"
+    UNSURE = "unsure"
+
+
+class FailureTag(StrEnum):
+    TOPOLOGY = "topology-failure"
+    COLLISION = "visual-collision"
+    DETAIL_LOSS = "excessive-detail-loss"
+    SHAPE_LOSS = "characteristic-shape-loss"
+    CONTEXT = "context-inconsistency"
+    DISPLACEMENT = "displacement-needed"
+
+
 class ApiModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -193,6 +223,68 @@ class AnnotationCreate(ApiModel):
 
 
 class AnnotationRead(AnnotationCreate):
+    id: UUID
+    created_at: datetime
+
+
+class SceneMemberCreate(ApiModel):
+    feature_id: UUID
+    role: SceneRole = SceneRole.SIBLING
+    importance: float = Field(default=0.5, ge=0, le=1)
+    z_order: int = Field(default=0, ge=-1000, le=1000)
+    style: dict[str, Any] = Field(default_factory=dict)
+
+
+class SceneCreate(ApiModel):
+    dataset_id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    target_feature_id: UUID
+    region: SceneRegion = SceneRegion.EUROPE
+    locality: str = Field(default="", max_length=240)
+    crs: str | None = Field(default="EPSG:4326", max_length=120)
+    viewport: dict[str, Any] = Field(default_factory=dict)
+    style: dict[str, Any] = Field(default_factory=dict)
+    scale_denominator: float | None = Field(default=None, gt=0)
+    zoom: float | None = Field(default=None, ge=0, le=30)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    members: list[SceneMemberCreate] = Field(default_factory=list, max_length=100)
+
+
+class SceneMemberRead(SceneMemberCreate):
+    feature: FeatureRead
+
+
+class SceneRead(ApiModel):
+    id: UUID
+    dataset_id: UUID
+    name: str
+    target_feature_id: UUID
+    region: SceneRegion
+    locality: str
+    crs: str | None
+    viewport: dict[str, Any]
+    style: dict[str, Any]
+    scale_denominator: float | None
+    zoom: float | None
+    provenance: dict[str, Any]
+    archived_at: datetime | None
+    members: list[SceneMemberRead]
+    created_at: datetime
+
+
+class SceneReviewCreate(ApiModel):
+    scene_id: UUID
+    revision_id: UUID
+    candidate_a_id: UUID | None = None
+    candidate_b_id: UUID | None = None
+    choice: AnnotationChoice
+    acceptability: Acceptability = Acceptability.UNSURE
+    failure_tags: list[FailureTag] = Field(default_factory=list)
+    viewport: dict[str, Any] = Field(default_factory=dict)
+    comment: str = Field(default="", max_length=2000)
+
+
+class SceneReviewRead(SceneReviewCreate):
     id: UUID
     created_at: datetime
 

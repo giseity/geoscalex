@@ -29,6 +29,11 @@ from geoscalex.domain import (
     JobRead,
     RevisionCreate,
     RevisionRead,
+    SceneCreate,
+    SceneMemberRead,
+    SceneRead,
+    SceneReviewCreate,
+    SceneReviewRead,
     WorkspaceCreate,
     WorkspaceRead,
     utc_now,
@@ -341,6 +346,171 @@ async def create_annotation(session: AsyncSession, data: AnnotationCreate) -> An
     await session.commit()
     await session.refresh(record)
     return AnnotationRead.model_validate(record)
+
+
+async def scene_read(session: AsyncSession, record: models.Scene) -> SceneRead:
+    memberships = (
+        await session.scalars(
+            select(models.SceneFeature)
+            .where(models.SceneFeature.scene_id == record.id)
+            .order_by(models.SceneFeature.z_order, models.SceneFeature.feature_id)
+        )
+    ).all()
+    members = [
+        SceneMemberRead(
+            feature_id=membership.feature_id,
+            role=membership.role,
+            importance=membership.importance,
+            z_order=membership.z_order,
+            style=membership.style,
+            feature=await feature_read(
+                session, await require(session, models.Feature, membership.feature_id)
+            ),
+        )
+        for membership in memberships
+    ]
+    return SceneRead(
+        id=record.id,
+        dataset_id=record.dataset_id,
+        name=record.name,
+        target_feature_id=record.target_feature_id,
+        region=record.region,
+        locality=record.locality,
+        crs=record.crs,
+        viewport=record.viewport,
+        style=record.style,
+        scale_denominator=record.scale_denominator,
+        zoom=record.zoom,
+        provenance=record.provenance,
+        archived_at=record.archived_at,
+        members=members,
+        created_at=record.created_at,
+    )
+
+
+async def create_scene(session: AsyncSession, data: SceneCreate) -> SceneRead:
+    await require(session, models.Dataset, data.dataset_id)
+    target = await require(session, models.Feature, data.target_feature_id)
+    if target.dataset_id != str(data.dataset_id):
+        raise ValueError("Scene target must belong to the scene dataset")
+    if target.archived_at is not None:
+        raise ValueError("Archived features cannot be scene targets")
+
+    member_ids = [str(member.feature_id) for member in data.members]
+    if str(data.target_feature_id) in member_ids:
+        raise ValueError("The target is added automatically and must not be repeated")
+    if len(member_ids) != len(set(member_ids)):
+        raise ValueError("A feature can only appear once in a scene")
+    if any(member.role.value == "target" for member in data.members):
+        raise ValueError("Only the scene target can have the target role")
+
+    context_features: dict[str, models.Feature] = {}
+    for member in data.members:
+        feature = await require(session, models.Feature, member.feature_id)
+        if feature.dataset_id != str(data.dataset_id):
+            raise ValueError("Every scene member must belong to the scene dataset")
+        if feature.archived_at is not None:
+            raise ValueError("Archived features cannot be added to scenes")
+        context_features[feature.id] = feature
+
+    record = models.Scene(
+        dataset_id=str(data.dataset_id),
+        name=data.name,
+        target_feature_id=str(data.target_feature_id),
+        region=data.region.value,
+        locality=data.locality,
+        crs=data.crs,
+        viewport=data.viewport,
+        style=data.style,
+        scale_denominator=data.scale_denominator,
+        zoom=data.zoom,
+        provenance=data.provenance,
+    )
+    session.add(record)
+    await session.flush()
+    session.add(
+        models.SceneFeature(
+            scene_id=record.id,
+            feature_id=target.id,
+            role="target",
+            importance=1.0,
+            z_order=100,
+            style={},
+        )
+    )
+    for member in data.members:
+        session.add(
+            models.SceneFeature(
+                scene_id=record.id,
+                feature_id=context_features[str(member.feature_id)].id,
+                role=member.role.value,
+                importance=member.importance,
+                z_order=member.z_order,
+                style=member.style,
+            )
+        )
+    await session.commit()
+    await session.refresh(record)
+    return await scene_read(session, record)
+
+
+async def list_scenes(
+    session: AsyncSession, dataset_id: UUID, include_archived: bool = False
+) -> list[SceneRead]:
+    await require(session, models.Dataset, dataset_id)
+    statement = select(models.Scene).where(models.Scene.dataset_id == str(dataset_id))
+    if not include_archived:
+        statement = statement.where(models.Scene.archived_at.is_(None))
+    records = (await session.scalars(statement.order_by(models.Scene.created_at))).all()
+    return [await scene_read(session, record) for record in records]
+
+
+async def get_scene(session: AsyncSession, scene_id: UUID) -> SceneRead:
+    return await scene_read(session, await require(session, models.Scene, scene_id))
+
+
+async def set_scene_archived(
+    session: AsyncSession, scene_id: UUID, archived: bool
+) -> SceneRead:
+    scene = await require(session, models.Scene, scene_id)
+    scene.archived_at = utc_now() if archived else None
+    await session.commit()
+    await session.refresh(scene)
+    return await scene_read(session, scene)
+
+
+async def create_scene_review(
+    session: AsyncSession, data: SceneReviewCreate
+) -> SceneReviewRead:
+    scene = await require(session, models.Scene, data.scene_id)
+    revision = await require(session, models.GeometryRevision, data.revision_id)
+    if revision.feature_id != scene.target_feature_id:
+        raise ValueError("Scene reviews must use a revision of the target feature")
+    for candidate_id in (data.candidate_a_id, data.candidate_b_id):
+        if candidate_id is None:
+            continue
+        candidate = await require(session, models.Candidate, candidate_id)
+        if candidate.revision_id != revision.id:
+            raise ValueError("Scene review candidates must belong to the target revision")
+    record = models.SceneReview(**data.model_dump(mode="json"))
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    return SceneReviewRead.model_validate(record)
+
+
+async def list_scene_reviews(
+    session: AsyncSession, scene_id: UUID
+) -> list[SceneReviewRead]:
+    await require(session, models.Scene, scene_id)
+    records = (
+        await session.scalars(
+            select(models.SceneReview)
+            .where(models.SceneReview.scene_id == str(scene_id))
+            .order_by(models.SceneReview.created_at.desc())
+        )
+    ).all()
+    return [SceneReviewRead.model_validate(record) for record in records]
 
 
 def candidate_read(record: models.Candidate) -> CandidateRead:

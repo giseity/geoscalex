@@ -120,6 +120,53 @@ class ComparisonAnnotation(Record):
     comment: Mapped[str] = mapped_column(Text, default="")
 
 
+class Scene(Record):
+    __tablename__ = "scenes"
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(200))
+    target_feature_id: Mapped[str] = mapped_column(
+        ForeignKey("features.id", ondelete="CASCADE")
+    )
+    region: Mapped[str] = mapped_column(String(32))
+    locality: Mapped[str] = mapped_column(String(240), default="")
+    crs: Mapped[str | None] = mapped_column(String(120))
+    viewport: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    style: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    scale_denominator: Mapped[float | None] = mapped_column(Float)
+    zoom: Mapped[float | None] = mapped_column(Float)
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SceneFeature(Base):
+    __tablename__ = "scene_features"
+    scene_id: Mapped[str] = mapped_column(
+        ForeignKey("scenes.id", ondelete="CASCADE"), primary_key=True
+    )
+    feature_id: Mapped[str] = mapped_column(
+        ForeignKey("features.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(24))
+    importance: Mapped[float] = mapped_column(Float, default=0.5)
+    z_order: Mapped[int] = mapped_column(Integer, default=0)
+    style: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class SceneReview(Record):
+    __tablename__ = "scene_reviews"
+    scene_id: Mapped[str] = mapped_column(ForeignKey("scenes.id", ondelete="CASCADE"))
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("geometry_revisions.id", ondelete="CASCADE")
+    )
+    candidate_a_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id"))
+    candidate_b_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id"))
+    choice: Mapped[str] = mapped_column(String(16))
+    acceptability: Mapped[str] = mapped_column(String(20), default="unsure")
+    failure_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    viewport: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    comment: Mapped[str] = mapped_column(Text, default="")
+
+
 class DatasetVersion(Record):
     __tablename__ = "dataset_versions"
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"))
