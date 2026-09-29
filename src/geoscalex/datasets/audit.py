@@ -102,6 +102,7 @@ def audit_export(export_dir: Path, *, model_vertex_limit: int = 512) -> dict[str
     split_counts: Counter[str] = Counter()
     geometry_counts: Counter[str] = Counter()
     generator_counts: Counter[str] = Counter()
+    stratum_counts: Counter[str] = Counter()
     source_counts: Counter[str] = Counter()
     coordinate_space_counts: Counter[str] = Counter()
     vertex_counts: list[int] = []
@@ -127,9 +128,16 @@ def audit_export(export_dir: Path, *, model_vertex_limit: int = 512) -> dict[str
             properties = {}
             fatal.append(f"Feature row {row_number} has invalid properties_json")
         generator = str(properties.get("generator_id") or row.get("source") or "unknown")
+        stratum = str(properties.get("stratum") or "unspecified")
         generator_counts[generator] += 1
+        stratum_counts[stratum] += 1
         normalized_rows.append(
-            {"split": split, "geometry_type": str(row.get("geometry_type")), "generator": generator}
+            {
+                "split": split,
+                "geometry_type": str(row.get("geometry_type")),
+                "generator": generator,
+                "stratum": stratum,
+            }
         )
 
         geometry_wkb = row.get("geometry_wkb")
@@ -247,6 +255,8 @@ def audit_export(export_dir: Path, *, model_vertex_limit: int = 512) -> dict[str
             "split_by_geometry_type": _nested_counts(normalized_rows, "split", "geometry_type"),
             "generator_families": dict(sorted(generator_counts.items())),
             "split_by_generator": _nested_counts(normalized_rows, "split", "generator"),
+            "strata": dict(sorted(stratum_counts.items())),
+            "split_by_stratum": _nested_counts(normalized_rows, "split", "stratum"),
             "sources": dict(sorted(source_counts.items())),
             "coordinate_spaces": dict(sorted(coordinate_space_counts.items())),
             "vertices": _distribution(vertex_counts),
