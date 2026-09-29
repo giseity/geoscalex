@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Archive, ArrowRight, Globe2, Layers3, MapPinned, Plus, Route } from "lucide-react"
 
 import { GeometryStage, type ContextGeometry } from "@/components/geometry-stage"
+import { SceneExtractionPanel } from "@/components/scene-extraction-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,7 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { api, type Feature, type Scene, type SceneRegion, type SceneRole } from "@/lib/api"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { api, type Batch, type Feature, type Job, type Scene, type SceneRegion, type SceneRole } from "@/lib/api"
 
 type ContextRole = Exclude<SceneRole, "target">
 
@@ -34,13 +36,18 @@ type SceneCreateInput = Parameters<typeof api.createScene>[0]
 
 type ScenesViewProps = {
   datasetId: string
+  batches: Batch[]
   features: Feature[]
+  jobs: Job[]
   scenes: Scene[]
   selectedSceneId: string | null
   onSelect: (scene: Scene) => void
   onCreate: (input: SceneCreateInput) => Promise<Scene>
   onReview: (scene: Scene) => void
   onArchive: (scene: Scene) => Promise<void>
+  onCancelExtraction: (jobId: string) => Promise<void>
+  onExtractionQueued: () => Promise<void>
+  onRefreshJobs: () => void
 }
 
 function contextFor(scene: Scene): ContextGeometry[] {
@@ -61,13 +68,18 @@ function regionLabel(region: SceneRegion) {
 
 export function ScenesView({
   datasetId,
+  batches,
   features,
+  jobs,
   scenes,
   selectedSceneId,
   onSelect,
   onCreate,
   onReview,
   onArchive,
+  onCancelExtraction,
+  onExtractionQueued,
+  onRefreshJobs,
 }: ScenesViewProps) {
   const [name, setName] = useState("Context pilot scene")
   const [targetId, setTargetId] = useState(features[0]?.id ?? "")
@@ -155,12 +167,25 @@ export function ScenesView({
 
       <div className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
         <Card className="h-fit min-w-0">
-          <CardHeader>
-            <div className="grid size-10 place-items-center rounded-lg bg-[#e8f4f1] text-[#00796f]"><Plus className="size-5" /></div>
-            <CardTitle className="pt-2">Build a scene</CardTitle>
-            <CardDescription>The target is included automatically. Select only the context that affects the decision.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+          <Tabs defaultValue="extract">
+            <CardHeader className="border-b pb-3">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="extract">Automatic</TabsTrigger>
+                <TabsTrigger value="manual">Manual</TabsTrigger>
+              </TabsList>
+            </CardHeader>
+            <TabsContent className="mt-0" value="extract">
+              <CardContent className="pt-5">
+                <SceneExtractionPanel batches={batches} datasetId={datasetId} jobs={jobs} onCancel={onCancelExtraction} onQueued={onExtractionQueued} onRefresh={onRefreshJobs} />
+              </CardContent>
+            </TabsContent>
+            <TabsContent className="mt-0" value="manual">
+              <CardHeader>
+                <div className="grid size-10 place-items-center rounded-lg bg-[#e8f4f1] text-[#00796f]"><Plus className="size-5" /></div>
+                <CardTitle className="pt-2">Build a scene</CardTitle>
+                <CardDescription>The target is included automatically. Select only the context that affects the decision.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
             <div className="space-y-2"><Label htmlFor="scene-name">Scene name</Label><Input id="scene-name" onChange={(event) => setName(event.target.value)} value={name} /></div>
             <div className="space-y-2">
               <Label>Target feature</Label>
@@ -202,8 +227,10 @@ export function ScenesView({
               </ScrollArea>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button className="w-full bg-[#006b63] hover:bg-[#005a53]" disabled={!targetId || pending} onClick={create}><Layers3 /> {pending ? "Creating…" : "Create contextual scene"}</Button>
-          </CardContent>
+                <Button className="w-full bg-[#006b63] hover:bg-[#005a53]" disabled={!targetId || pending} onClick={create}><Layers3 /> {pending ? "Creating…" : "Create contextual scene"}</Button>
+              </CardContent>
+            </TabsContent>
+          </Tabs>
         </Card>
 
         <div className="min-w-0 space-y-5">

@@ -140,6 +140,37 @@ export type SceneReview = {
   comment: string
   created_at: string
 }
+export type SceneExtractionInput = {
+  dataset_id: string
+  target_batch_id: string | null
+  region: SceneRegion
+  locality: string
+  location_group_prefix: string
+  scale_denominator: number
+  style_preset: string
+  radius: number
+  max_context: number
+  geometry_types: Array<"LineString" | "Polygon">
+  max_scenes: number
+  skip_existing_targets: boolean
+}
+export type SceneExtractionProposal = {
+  target_feature_id: string
+  target_name: string
+  context_count: number
+  roles: Partial<Record<SceneRole, number>>
+  viewport: Record<string, unknown>
+  location_group: string
+}
+export type SceneExtractionPreview = {
+  eligible_targets: number
+  proposed_scenes: number
+  isolated_targets: number
+  existing_targets: number
+  incompatible_features: number
+  role_counts: Partial<Record<SceneRole, number>>
+  samples: SceneExtractionProposal[]
+}
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1"
 
@@ -287,4 +318,11 @@ export const api = {
     viewport?: Record<string, unknown>
     comment?: string
   }) => request<SceneReview>("/scene-reviews", { method: "POST", body: JSON.stringify(body) }),
+  previewSceneExtraction: (body: SceneExtractionInput) =>
+    request<SceneExtractionPreview>("/scene-extractions/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  runSceneExtraction: (body: SceneExtractionInput) =>
+    request<Job>("/scene-extractions", { method: "POST", body: JSON.stringify(body) }),
 }
