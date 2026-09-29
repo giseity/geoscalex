@@ -57,7 +57,7 @@ class MethodRegistry:
                 supported,
                 False,
                 False,
-                "No encoder checkpoint is configured",
+                "No encoder checkpoint or PyTorch runtime is configured",
             ),
         }
 

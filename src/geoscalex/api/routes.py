@@ -1,3 +1,4 @@
+import importlib.util
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response, status
@@ -317,7 +318,9 @@ async def simplification_methods() -> list[SimplificationMethodRead]:
     return method_registry.definitions(
         deepseek_available=await gateway_available(),
         encoder_available=bool(
-            settings.encoder_checkpoint and settings.encoder_checkpoint.exists()
+            settings.encoder_checkpoint
+            and settings.encoder_checkpoint.is_file()
+            and importlib.util.find_spec("torch") is not None
         ),
     )
 

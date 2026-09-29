@@ -16,7 +16,7 @@ from geoscalex.domain import (
 from geoscalex.generators import generator_registry
 from geoscalex.geometry.analysis import validate_geometry
 from geoscalex.scenes.extraction import build_extraction_plan
-from geoscalex.simplification.execution import execute_deepseek
+from geoscalex.simplification.execution import execute_deepseek, execute_encoder
 from geoscalex.storage import models, repository
 from geoscalex.storage.db import Session, init_database
 
@@ -166,6 +166,8 @@ async def execute_simplification_job(job_id: str) -> None:
             candidate = await repository.execute_classical_simplification(session, job, payload)
         elif payload.method == "deepseek-keep-move":
             candidate = await execute_deepseek(session, job, payload)
+        elif payload.method == "encoder-remove-move":
+            candidate = await execute_encoder(session, job, payload)
         else:
             raise ValueError(f"Worker does not yet support method: {payload.method}")
         await session.refresh(job)

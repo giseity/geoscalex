@@ -6,6 +6,7 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from geoscalex.config import settings
 from geoscalex.domain import CandidateRead, SimplificationRunCreate
 from geoscalex.geometry.analysis import GeometryValidationError
 from geoscalex.simplification.budget import resolve_budget
@@ -69,4 +70,46 @@ async def execute_deepseek(
             errors.append(str(error))
     raise ValueError(
         "DeepSeek did not produce a valid exact-budget candidate: " + "; ".join(errors)
+    )
+
+
+async def execute_encoder(
+    session: AsyncSession, job: models.Job, data: SimplificationRunCreate
+) -> CandidateRead:
+    if settings.encoder_checkpoint is None:
+        raise ValueError("No encoder checkpoint is configured")
+    from geoscalex.ml.inference import checkpoint_hash, infer_geometry, load_checkpoint
+
+    checkpoint = settings.encoder_checkpoint.resolve()
+    if not checkpoint.is_file():
+        raise ValueError(f"Encoder checkpoint does not exist: {checkpoint}")
+    revision = await repository.require(session, models.GeometryRevision, data.revision_id)
+    resolved = resolve_budget(revision.geometry_geojson, data.budget)
+    started = time.perf_counter()
+    model, metadata = load_checkpoint(checkpoint, "cpu")
+    geometry, source_mapping, scores, diagnostics, movement_metrics = infer_geometry(
+        model,
+        revision.geometry_geojson,
+        resolved.vertex_count,
+        device="cpu",
+    )
+    return await repository.persist_generated_candidate(
+        session,
+        job=job,
+        data=data,
+        geometry=geometry,
+        source_mapping=source_mapping,
+        method_kind="neural",
+        provenance={
+            "checkpoint": str(checkpoint),
+            "checkpoint_hash": checkpoint_hash(checkpoint),
+            "checkpoint_metadata": metadata,
+            "device": "cpu",
+        },
+        diagnostics=diagnostics,
+        extra_metrics={
+            **movement_metrics,
+            "latency_ms": (time.perf_counter() - started) * 1000,
+        },
+        vertex_scores=scores,
     )

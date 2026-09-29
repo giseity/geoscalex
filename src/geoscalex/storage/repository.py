@@ -680,6 +680,7 @@ async def persist_generated_candidate(
     provenance: dict[str, Any],
     diagnostics: dict[str, Any],
     extra_metrics: dict[str, Any],
+    vertex_scores: list[float] | None = None,
 ) -> CandidateRead:
     revision = await require(session, models.GeometryRevision, data.revision_id)
     resolved = resolve_budget(revision.geometry_geojson, data.budget)
@@ -700,7 +701,7 @@ async def persist_generated_candidate(
         requested_budget=resolved.requested,
         resolved_vertex_budget=resolved.vertex_count,
         geometry_geojson=geometry,
-        vertex_scores=[],
+        vertex_scores=vertex_scores or [],
         protected_mask=[],
         source_mapping=source_mapping,
         provenance=provenance,

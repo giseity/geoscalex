@@ -33,6 +33,9 @@ dev = [
   "ruff>=0.13",
   "types-shapely>=2.1"
 ]
+ml = [
+  "torch>=2.7,<3"
+]
 
 [dependency-groups]
 dev = [
@@ -47,6 +50,8 @@ dev = [
 [project.scripts]
 geoscalex-api = "geoscalex.api.main:run"
 geoscalex-worker = "geoscalex.worker.main:run"
+geoscalex-train = "geoscalex.ml.training:run"
+geoscalex-evaluate = "geoscalex.ml.evaluation:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/geoscalex"]
@@ -71,3 +76,11 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["geoscalex.ml.model"]
+disable_error_code = ["misc"]
