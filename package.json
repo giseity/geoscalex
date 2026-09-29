@@ -3,10 +3,10 @@
   "private": true,
   "packageManager": "pnpm@10.8.0",
   "scripts": {
-    "dev": "uv run alembic upgrade head && concurrently -k -n web,api,worker -c cyan,green,magenta \"pnpm --filter @geoscalex/web dev\" \"uv run uvicorn geoscalex.api.main:app --reload --host 127.0.0.1 --port 8000\" \"uv run python -m geoscalex.worker.main\"",
-    "build": "pnpm --filter @geoscalex/web build",
-    "test": "uv run pytest && pnpm --filter @geoscalex/web test -- --run",
-    "check": "uv run ruff check . && uv run mypy src && pnpm --filter @geoscalex/web check",
+    "dev": "uv run alembic upgrade head && concurrently -k -n web,api,worker,gateway -c cyan,green,magenta,yellow \"pnpm --filter @geoscalex/web dev\" \"uv run uvicorn geoscalex.api.main:app --reload --host 127.0.0.1 --port 8000\" \"uv run python -m geoscalex.worker.main\" \"pnpm --filter @geoscalex/model-gateway dev\"",
+    "build": "pnpm --filter @geoscalex/web build && pnpm --filter @geoscalex/model-gateway build",
+    "test": "uv run pytest && pnpm --filter @geoscalex/web test -- --run && pnpm --filter @geoscalex/model-gateway test",
+    "check": "uv run ruff check . && uv run mypy src && pnpm --filter @geoscalex/web check && pnpm --filter @geoscalex/model-gateway check",
     "e2e": "pnpm --filter @geoscalex/web e2e"
   },
   "devDependencies": {

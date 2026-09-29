@@ -67,8 +67,20 @@ class MethodRegistry:
         except KeyError as error:
             raise LookupError(f"Unknown simplification method: {method_id}") from error
 
-    def definitions(self) -> list[SimplificationMethodRead]:
-        return [definition.read() for definition in self._methods.values()]
+    def definitions(
+        self, *, deepseek_available: bool = False, encoder_available: bool = False
+    ) -> list[SimplificationMethodRead]:
+        definitions: list[SimplificationMethodRead] = []
+        for definition in self._methods.values():
+            item = definition.read()
+            if item.id == "deepseek-keep-move" and deepseek_available:
+                item.available = True
+                item.unavailable_reason = None
+            if item.id == "encoder-remove-move" and encoder_available:
+                item.available = True
+                item.unavailable_reason = None
+            definitions.append(item)
+        return definitions
 
 
 method_registry = MethodRegistry()

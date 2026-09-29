@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     web_origin: str = "http://127.0.0.1:5173"
+    model_gateway_url: str = "http://127.0.0.1:8001"
+    encoder_checkpoint: Path | None = None
 
     @property
     def database_path(self) -> Path:

@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Response, status
 
 from geoscalex.api.dependencies import DatabaseSession
+from geoscalex.config import settings
 from geoscalex.datasets.io import list_versions, publish_dataset
 from geoscalex.domain import (
     AnnotationCreate,
@@ -43,6 +44,7 @@ from geoscalex.generators.registry import GeneratorDefinition
 from geoscalex.geometry.analysis import GeometryValidationError
 from geoscalex.scenes.extraction import build_extraction_plan
 from geoscalex.simplification import method_registry
+from geoscalex.simplification.gateway import gateway_available
 from geoscalex.storage import repository
 
 router = APIRouter()
@@ -312,7 +314,12 @@ async def candidates(revision_id: UUID, session: DatabaseSession) -> list[Candid
 
 @router.get("/simplification-methods", response_model=list[SimplificationMethodRead])
 async def simplification_methods() -> list[SimplificationMethodRead]:
-    return method_registry.definitions()
+    return method_registry.definitions(
+        deepseek_available=await gateway_available(),
+        encoder_available=bool(
+            settings.encoder_checkpoint and settings.encoder_checkpoint.exists()
+        ),
+    )
 
 
 @router.post("/simplification-runs", response_model=JobRead, status_code=202)
@@ -320,6 +327,12 @@ async def create_simplification_run(
     data: SimplificationRunCreate, session: DatabaseSession
 ) -> JobRead:
     try:
+        available = {method.id: method for method in await simplification_methods()}
+        method = available.get(data.method)
+        if method is None:
+            raise LookupError(f"Unknown simplification method: {data.method}")
+        if not method.available:
+            raise ValueError(method.unavailable_reason or f"{method.name} is unavailable")
         return await repository.enqueue_simplification_run(session, data)
     except LookupError as error:
         raise not_found(error) from error

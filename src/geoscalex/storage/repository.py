@@ -40,7 +40,7 @@ from geoscalex.domain import (
     WorkspaceRead,
     utc_now,
 )
-from geoscalex.geometry.analysis import validate_geometry
+from geoscalex.geometry.analysis import comparison_metrics, validate_geometry
 from geoscalex.geometry.simplify import add_polygon_hole, build_candidate
 from geoscalex.simplification.budget import ResolvedBudget, resolve_budget
 from geoscalex.simplification.registry import method_registry
@@ -632,9 +632,12 @@ async def enqueue_simplification_run(
         and not method.supports_holes
     ):
         raise ValueError(f"{method.name} does not support polygon holes")
-    if not method.available:
-        raise ValueError(method.unavailable_reason or f"{method.name} is unavailable")
     resolved = resolve_budget(revision.geometry_geojson, data.budget)
+    if data.method == "deepseek-keep-move":
+        if resolved.source_vertex_count > 256:
+            raise ValueError("DeepSeek experiments support at most 256 source vertices")
+        if resolved.vertex_count > 64:
+            raise ValueError("DeepSeek experiments support an output budget of at most 64 vertices")
     job = models.Job(
         kind="simplification-run",
         payload={
@@ -664,6 +667,50 @@ async def execute_classical_simplification(
         resolved=resolved,
         job_id=job.id,
     )
+
+
+async def persist_generated_candidate(
+    session: AsyncSession,
+    *,
+    job: models.Job,
+    data: SimplificationRunCreate,
+    geometry: dict[str, Any],
+    source_mapping: list[int],
+    method_kind: str,
+    provenance: dict[str, Any],
+    diagnostics: dict[str, Any],
+    extra_metrics: dict[str, Any],
+) -> CandidateRead:
+    revision = await require(session, models.GeometryRevision, data.revision_id)
+    resolved = resolve_budget(revision.geometry_geojson, data.budget)
+    metrics = {
+        **comparison_metrics(revision.geometry_geojson, geometry),
+        **extra_metrics,
+    }
+    metrics["requested_vertex_budget"] = resolved.vertex_count
+    metrics["budget_satisfied"] = metrics["vertex_count"] == resolved.vertex_count
+    method = method_registry.get(data.method)
+    record = models.Candidate(
+        revision_id=revision.id,
+        method=data.method,
+        method_version=method.version,
+        method_kind=method_kind,
+        job_id=job.id,
+        parameters={"vertex_budget": resolved.vertex_count},
+        requested_budget=resolved.requested,
+        resolved_vertex_budget=resolved.vertex_count,
+        geometry_geojson=geometry,
+        vertex_scores=[],
+        protected_mask=[],
+        source_mapping=source_mapping,
+        provenance=provenance,
+        diagnostics=diagnostics,
+        metrics=metrics,
+    )
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    return candidate_read(record)
 
 
 async def list_candidates(session: AsyncSession, revision_id: UUID) -> list[CandidateRead]:
