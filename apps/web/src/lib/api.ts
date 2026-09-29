@@ -48,12 +48,32 @@ export type Candidate = {
   revision_id: string
   method: string
   method_version: string
+  method_kind: "classical" | "llm" | "neural"
+  job_id: string | null
   parameters: { tolerance: number | null; vertex_budget: number | null }
+  requested_budget: SimplificationBudget | Record<string, never>
+  resolved_vertex_budget: number | null
   geometry: Geometry
   vertex_scores: Array<number | null>
   protected_mask: boolean[]
+  source_mapping: number[]
+  provenance: Record<string, unknown>
+  diagnostics: Record<string, unknown>
   metrics: Record<string, number | string | boolean | number[]>
   created_at: string
+}
+export type SimplificationBudget =
+  | { kind: "vertex-count"; value: number }
+  | { kind: "retention-ratio"; value: number }
+export type SimplificationMethod = {
+  id: string
+  name: string
+  version: string
+  kind: "classical" | "llm" | "neural"
+  geometry_types: Array<Geometry["type"]>
+  supports_holes: boolean
+  available: boolean
+  unavailable_reason: string | null
 }
 export type GeneratorDefinition = {
   id: string
@@ -242,6 +262,13 @@ export const api = {
         method,
         vertex_budget: vertexBudget,
       }),
+    }),
+  simplificationMethods: () =>
+    request<SimplificationMethod[]>("/simplification-methods"),
+  runSimplification: (revisionId: string, method: string, budget: SimplificationBudget) =>
+    request<Job>("/simplification-runs", {
+      method: "POST",
+      body: JSON.stringify({ revision_id: revisionId, method, budget }),
     }),
   annotate: (body: {
     dataset_id: string

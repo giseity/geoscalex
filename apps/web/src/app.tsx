@@ -13,7 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { api, type Candidate, type Dataset, type Feature, type Geometry, type Scene } from "@/lib/api"
+import { api, type Candidate, type Dataset, type Feature, type Geometry, type Scene, type SimplificationBudget } from "@/lib/api"
 import type { ReviewDraft } from "@/lib/api-extra"
 import { vertexCount } from "@/lib/geometry"
 
@@ -90,6 +90,10 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null)
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null)
   const [budget, setBudget] = useState(12)
+  const [budgetKind, setBudgetKind] = useState<SimplificationBudget["kind"]>("vertex-count")
+  const [retentionRatio, setRetentionRatio] = useState(0.5)
+  const [methodA, setMethodA] = useState("douglas-peucker")
+  const [methodB, setMethodB] = useState("visvalingam-whyatt")
   const [candidateBusy, setCandidateBusy] = useState(false)
   const [leftOpen, setLeftOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(true)
@@ -99,6 +103,7 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
   const featuresQuery = useQuery({ queryKey: ["features", dataset.id], queryFn: () => api.features(dataset.id) })
   const batchesQuery = useQuery({ queryKey: ["batches", dataset.id], queryFn: () => api.batches(dataset.id) })
   const generatorsQuery = useQuery({ queryKey: ["generators"], queryFn: api.generators })
+  const methodsQuery = useQuery({ queryKey: ["simplification-methods"], queryFn: api.simplificationMethods })
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs,
@@ -109,6 +114,11 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
   const jobStateFingerprint = (jobsQuery.data ?? []).map((job) => `${job.id}:${job.status}`).join("|")
   const features = featuresQuery.data ?? []
   const selectedFeature = features.find((feature) => feature.id === selectedFeatureId) ?? features[0]
+  const sourceVertexCount = vertexCount(selectedFeature?.current_revision.geometry)
+  const minimumBudget = selectedFeature?.current_revision.geometry.type === "Polygon" ? 3 : 2
+  const resolvedBudget = budgetKind === "vertex-count"
+    ? Math.max(minimumBudget, Math.min(budget, sourceVertexCount || minimumBudget))
+    : Math.max(minimumBudget, Math.min(sourceVertexCount, Math.floor(sourceVertexCount * retentionRatio + 0.5)))
   const scenes = scenesQuery.data ?? []
   const selectedScene = scenes.find((scene) => scene.id === selectedSceneId)
   const activeScene = selectedScene?.target_feature_id === selectedFeature?.id ? selectedScene : undefined
@@ -128,21 +138,22 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
     void queryClient.invalidateQueries({ queryKey: ["features", dataset.id] })
     void queryClient.invalidateQueries({ queryKey: ["batches", dataset.id] })
     void queryClient.invalidateQueries({ queryKey: ["scenes", dataset.id] })
+    void queryClient.invalidateQueries({ queryKey: ["candidates"] })
   }, [dataset.id, jobStateFingerprint])
 
   useEffect(() => {
     if (selectedFeature) {
       setSelectedFeatureId(selectedFeature.id)
-      const minimum = selectedFeature.current_revision.geometry.type === "Polygon" ? 4 : 2
+      const minimum = selectedFeature.current_revision.geometry.type === "Polygon" ? 3 : 2
       setBudget(Math.min(12, Math.max(minimum, vertexCount(selectedFeature.current_revision.geometry))))
     } else setSelectedFeatureId(null)
   }, [selectedFeature?.id])
 
   const [candidateA, candidateB] = useMemo(() => {
     const candidates = candidatesQuery.data ?? []
-    const matching = (method: string) => [...candidates].reverse().find((candidate) => candidate.method === method && candidate.parameters.vertex_budget === budget)
-    return [matching("douglas-peucker"), matching("visvalingam-whyatt")]
-  }, [budget, candidatesQuery.data])
+    const matching = (method: string) => [...candidates].reverse().find((candidate) => candidate.method === method && candidate.resolved_vertex_budget === resolvedBudget)
+    return [matching(methodA), matching(methodB)]
+  }, [resolvedBudget, candidatesQuery.data, methodA, methodB])
 
   async function refreshFeatures(message?: string) {
     await queryClient.invalidateQueries({ queryKey: ["features", dataset.id] })
@@ -159,12 +170,14 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
     if (!selectedFeature) return
     setCandidateBusy(true)
     try {
-      await Promise.all([
-        api.createCandidate(selectedFeature.current_revision.id, "douglas-peucker", budget),
-        api.createCandidate(selectedFeature.current_revision.id, "visvalingam-whyatt", budget),
-      ])
-      await candidatesQuery.refetch()
-      setNotice("Matched candidates created")
+      const requestedBudget: SimplificationBudget = budgetKind === "vertex-count"
+        ? { kind: "vertex-count", value: resolvedBudget }
+        : { kind: "retention-ratio", value: retentionRatio }
+      await Promise.all([...new Set([methodA, methodB])].map((method) =>
+        api.runSimplification(selectedFeature.current_revision.id, method, requestedBudget),
+      ))
+      await jobsQuery.refetch()
+      setNotice("Matched simplification queued")
     } finally { setCandidateBusy(false) }
   }
 
@@ -200,13 +213,13 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
             </div>
           </header>
           {notice && <div className="fixed right-5 top-20 z-50 rounded-lg bg-slate-950 px-4 py-2 text-sm text-white shadow-xl">{notice}</div>}
-          {view === "compare" && <CompareView candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} scene={activeScene} onAnnotate={async (review: ReviewDraft) => {
+          {view === "compare" && <CompareView candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} labelA={methodsQuery.data?.find((method) => method.id === methodA)?.name} labelB={methodsQuery.data?.find((method) => method.id === methodB)?.name} scene={activeScene} onAnnotate={async (review: ReviewDraft) => {
             if (!selectedFeature || !annotationCandidateA || !annotationCandidateB) return
             if (activeScene) {
-              await api.createSceneReview({ scene_id: activeScene.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice: review.choice, acceptability: review.acceptability, failure_tags: review.failureTags, comment: review.comment, viewport: { ...activeScene.viewport, vertex_budget: budget } })
+              await api.createSceneReview({ scene_id: activeScene.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice: review.choice, acceptability: review.acceptability, failure_tags: review.failureTags, comment: review.comment, viewport: { ...activeScene.viewport, vertex_budget: resolvedBudget } })
               setNotice("Contextual review recorded")
             } else {
-              await api.annotate({ dataset_id: dataset.id, feature_id: selectedFeature.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice: review.choice, viewport: { mode: "workbench", vertex_budget: budget } })
+              await api.annotate({ dataset_id: dataset.id, feature_id: selectedFeature.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice: review.choice, viewport: { mode: "workbench", vertex_budget: resolvedBudget } })
               setNotice("Preference recorded")
             }
           }} />}
@@ -218,7 +231,7 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
           {view === "import" && <ImportView onImport={async (batchName, collection) => { const result = await api.importGeoJson(dataset.id, batchName, collection); await refreshFeatures(); return result }} />}
           {view === "versions" && <VersionsView featureCount={features.length} onPublish={async (splitSeed) => { await api.publish(dataset.id, splitSeed); await versionsQuery.refetch() }} sceneCount={scenes.length} versions={versionsQuery.data ?? []} />}
         </SidebarInset>
-        {view === "compare" && <InspectorSidebar budget={budget} busy={candidateBusy} candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} onAddHole={() => setEditor("hole")} onArchive={async () => { if (selectedFeature) { await api.archiveFeature(selectedFeature.id); await refreshFeatures("Feature archived") } }} onBudgetChange={setBudget} onBuildCandidates={() => { void buildCandidates() }} onDuplicate={async () => { if (selectedFeature) { const copy = await api.duplicateFeature(selectedFeature.id); await refreshFeatures("Feature duplicated"); setSelectedFeatureId(copy.id) } }} onEdit={() => setEditor("edit")} onRestoreRevision={async (revisionId) => { if (selectedFeature) { await api.restoreRevision(selectedFeature.id, revisionId); await refreshFeatures("Revision restored"); await revisionsQuery.refetch() } }} revisions={revisionsQuery.data ?? []} />}
+        {view === "compare" && <InspectorSidebar budget={resolvedBudget} budgetKind={budgetKind} busy={candidateBusy} candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} methodA={methodA} methodB={methodB} methods={methodsQuery.data ?? []} onAddHole={() => setEditor("hole")} onArchive={async () => { if (selectedFeature) { await api.archiveFeature(selectedFeature.id); await refreshFeatures("Feature archived") } }} onBudgetChange={setBudget} onBudgetKindChange={setBudgetKind} onBuildCandidates={() => { void buildCandidates() }} onDuplicate={async () => { if (selectedFeature) { const copy = await api.duplicateFeature(selectedFeature.id); await refreshFeatures("Feature duplicated"); setSelectedFeatureId(copy.id) } }} onEdit={() => setEditor("edit")} onMethodAChange={setMethodA} onMethodBChange={setMethodB} onRestoreRevision={async (revisionId) => { if (selectedFeature) { await api.restoreRevision(selectedFeature.id, revisionId); await refreshFeatures("Revision restored"); await revisionsQuery.refetch() } }} onRetentionRatioChange={setRetentionRatio} retentionRatio={retentionRatio} revisions={revisionsQuery.data ?? []} />}
       </SidebarProvider>
       {editor && (
         <Suspense fallback={null}>

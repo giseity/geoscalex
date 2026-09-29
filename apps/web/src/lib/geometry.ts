@@ -16,7 +16,9 @@ export function geometryPositions(geometry?: Geometry): Position[] {
 }
 
 export function vertexCount(geometry?: Geometry): number {
-  return geometryPositions(geometry).length
+  if (!geometry) return 0
+  if (geometry.type === "LineString") return geometry.coordinates.length
+  return geometry.coordinates.reduce((count, ring) => count + Math.max(0, ring.length - 1), 0)
 }
 
 export function projectionFor(geometries: Array<Geometry | undefined>): Projection {

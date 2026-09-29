@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Slider } from "@/components/ui/slider"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import type { Candidate, Feature, Revision } from "@/lib/api"
+import type { Candidate, Feature, Revision, SimplificationBudget, SimplificationMethod } from "@/lib/api"
 import { vertexCount } from "@/lib/geometry"
 
 type InspectorSidebarProps = {
@@ -24,9 +24,18 @@ type InspectorSidebarProps = {
   candidateA?: Candidate
   candidateB?: Candidate
   budget: number
+  budgetKind: SimplificationBudget["kind"]
+  retentionRatio: number
   busy: boolean
+  methods: SimplificationMethod[]
+  methodA: string
+  methodB: string
   revisions: Revision[]
   onBudgetChange: (budget: number) => void
+  onBudgetKindChange: (kind: SimplificationBudget["kind"]) => void
+  onRetentionRatioChange: (ratio: number) => void
+  onMethodAChange: (method: string) => void
+  onMethodBChange: (method: string) => void
   onBuildCandidates: () => void
   onEdit: () => void
   onAddHole: () => void
@@ -49,9 +58,18 @@ export function InspectorSidebar({
   candidateA,
   candidateB,
   budget,
+  budgetKind,
+  retentionRatio,
   busy,
+  methods,
+  methodA,
+  methodB,
   revisions,
   onBudgetChange,
+  onBudgetKindChange,
+  onRetentionRatioChange,
+  onMethodAChange,
+  onMethodBChange,
   onBuildCandidates,
   onEdit,
   onAddHole,
@@ -60,7 +78,10 @@ export function InspectorSidebar({
   onRestoreRevision,
 }: InspectorSidebarProps) {
   const sourceCount = vertexCount(feature?.current_revision.geometry)
+  const minimum = feature?.current_revision.geometry.type === "Polygon" ? 3 : 2
+  const hasHoles = feature?.current_revision.geometry.type === "Polygon" && feature.current_revision.geometry.coordinates.length > 1
   const reduction = candidateA ? Math.round(Number(candidateA.metrics.vertex_reduction) * 100) : 0
+  const methodAllowed = (method: SimplificationMethod) => method.available && (!hasHoles || method.supports_holes)
 
   return (
     <Sidebar className="border-l" collapsible="offcanvas" side="right">
@@ -113,20 +134,44 @@ export function InspectorSidebar({
             <SidebarGroup>
               <SidebarGroupLabel>Matched budget</SidebarGroupLabel>
               <SidebarGroupContent className="space-y-4 px-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1.5">
+                    <Label>Candidate A</Label>
+                    <Select onValueChange={onMethodAChange} value={methodA}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{methods.map((method) => <SelectItem disabled={!methodAllowed(method)} key={method.id} value={method.id}>{method.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Candidate B</Label>
+                    <Select onValueChange={onMethodBChange} value={methodB}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{methods.map((method) => <SelectItem disabled={!methodAllowed(method)} key={method.id} value={method.id}>{method.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Budget input</Label>
+                  <Select onValueChange={(value) => onBudgetKindChange(value as SimplificationBudget["kind"])} value={budgetKind}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="vertex-count">Vertex count</SelectItem>
+                      <SelectItem value="retention-ratio">Retention ratio</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="flex items-end justify-between">
                   <div>
                     <p className="text-2xl font-semibold tabular-nums">{budget}</p>
-                    <p className="text-xs text-muted-foreground">target vertices</p>
+                    <p className="text-xs text-muted-foreground">resolved unique vertices{budgetKind === "retention-ratio" ? ` · ${Math.round(retentionRatio * 100)}%` : ""}</p>
                   </div>
                   <Gauge className="size-5 text-[#00796f]" />
                 </div>
-                <Slider
-                  max={Math.max(3, sourceCount)}
-                  min={feature.current_revision.geometry.type === "Polygon" ? 4 : 2}
-                  onValueChange={([value]) => onBudgetChange(value)}
-                  step={1}
-                  value={[Math.min(budget, Math.max(3, sourceCount))]}
-                />
+                {budgetKind === "vertex-count" ? (
+                  <Slider max={Math.max(minimum, sourceCount)} min={minimum} onValueChange={([value]) => onBudgetChange(value)} step={1} value={[Math.min(budget, Math.max(minimum, sourceCount))]} />
+                ) : (
+                  <Slider max={100} min={Math.max(1, Math.ceil((minimum / Math.max(sourceCount, minimum)) * 100))} onValueChange={([value]) => onRetentionRatioChange(value / 100)} step={1} value={[Math.round(retentionRatio * 100)]} />
+                )}
                 <Progress value={sourceCount ? (budget / sourceCount) * 100 : 0} />
                 <Button className="w-full bg-[#006b63] hover:bg-[#005a53]" disabled={busy || sourceCount <= 2} onClick={onBuildCandidates}>
                   <Sparkles /> {busy ? "Computing…" : "Build comparison"}
@@ -135,6 +180,13 @@ export function InspectorSidebar({
                   <p className="text-xs leading-5 text-muted-foreground">
                     A and B both target {budget} vertices. A currently removes {reduction}% of source vertices.
                   </p>
+                )}
+                {hasHoles && <p className="text-xs leading-5 text-amber-700">Learned and DeepSeek methods are unavailable for polygons with holes in v0.4.</p>}
+                {(candidateA || candidateB) && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Metric label="A achieved" value={candidateA ? Number(candidateA.metrics.vertex_count) : "—"} />
+                    <Metric label="B achieved" value={candidateB ? Number(candidateB.metrics.vertex_count) : "—"} />
+                  </div>
                 )}
               </SidebarGroupContent>
             </SidebarGroup>

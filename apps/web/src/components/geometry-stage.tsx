@@ -44,6 +44,8 @@ type GeometryStageProps = {
   swipe: number
   className?: string
   comparisonLabels?: boolean
+  leftLabel?: string
+  rightLabel?: string
 }
 
 export type ContextGeometry = {
@@ -70,6 +72,8 @@ export function GeometryStage({
   swipe,
   className,
   comparisonLabels = true,
+  leftLabel = "Candidate A",
+  rightLabel = "Candidate B",
 }: GeometryStageProps) {
   const clipId = useId().replaceAll(":", "")
   const projection = projectionFor([original, left, right, ...context.map((item) => item.geometry)])
@@ -161,8 +165,8 @@ export function GeometryStage({
       </svg>
       {comparisonLabels && (
         <div className="pointer-events-none absolute inset-x-4 top-4 flex justify-between text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700">
-          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">A · Douglas–Peucker</span>
-          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">B · Visvalingam–Whyatt</span>
+          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">A · {leftLabel}</span>
+          <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm">B · {rightLabel}</span>
         </div>
       )}
     </div>

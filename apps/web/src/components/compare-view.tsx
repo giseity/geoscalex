@@ -17,6 +17,8 @@ type CompareViewProps = {
   candidateB?: Candidate
   scene?: Scene
   onAnnotate: (review: ReviewDraft) => Promise<void>
+  labelA?: string
+  labelB?: string
 }
 
 const failureOptions: Array<{ value: FailureTag; label: string }> = [
@@ -28,7 +30,7 @@ const failureOptions: Array<{ value: FailureTag; label: string }> = [
   { value: "displacement-needed", label: "Needs displacement" },
 ]
 
-export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate }: CompareViewProps) {
+export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate, labelA, labelB }: CompareViewProps) {
   const [mode, setMode] = useState<"swipe" | "overlay">("swipe")
   const [swipe, setSwipe] = useState(50)
   const [choice, setChoice] = useState<AnnotationChoice | null>(null)
@@ -124,9 +126,11 @@ export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate
                 className="min-h-[430px] flex-1 rounded-none border-0"
                 context={context}
                 left={candidateA?.geometry}
+                leftLabel={labelA ?? candidateA?.method}
                 mode={mode}
                 original={feature.current_revision.geometry}
                 right={candidateB?.geometry}
+                rightLabel={labelB ?? candidateB?.method}
                 swipe={swipe}
               />
               {mode === "swipe" && (
@@ -139,7 +143,7 @@ export function CompareView({ feature, candidateA, candidateB, scene, onAnnotate
             <div className="grid min-h-[470px] flex-1 place-content-center bg-[#f3f0e7] px-6 text-center">
               <div className="mx-auto grid size-12 place-items-center rounded-full bg-white shadow-sm"><TriangleAlert className="size-5 text-[#db5e37]" /></div>
               <h2 className="mt-4 font-semibold text-slate-900">No matched candidates yet</h2>
-              <p className="mt-2 max-w-sm text-sm leading-6 text-slate-600">Choose a vertex budget in the inspector, then build a Douglas–Peucker and Visvalingam–Whyatt comparison.</p>
+              <p className="mt-2 max-w-sm text-sm leading-6 text-slate-600">Choose two available methods and a matched budget in the inspector, then build the comparison.</p>
             </div>
           )}
         </CardContent>
