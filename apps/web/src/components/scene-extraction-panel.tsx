@@ -95,6 +95,7 @@ export function SceneExtractionPanel({
       setPending("queue")
       setError(null)
       await api.runSceneExtraction(input())
+      setPreview(null)
       await onQueued()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not queue extraction")
