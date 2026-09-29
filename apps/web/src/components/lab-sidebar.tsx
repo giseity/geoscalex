@@ -1,17 +1,7 @@
 import { Fragment } from "react"
-import {
-  Beaker,
-  Boxes,
-  ChevronsUpDown,
-  Database,
-  FileUp,
-  GitCompareArrows,
-  Layers3,
-  MapPinned,
-  Plus,
-  Settings2,
-} from "lucide-react"
+import { ChevronsUpDown, CircleDot, Database, GitCompareArrows, Layers3, MapPinned, Plus } from "lucide-react"
 
+import { GeometryThumbnail } from "@/components/geometry-stage"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -34,13 +24,17 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import type { Batch, Dataset, Feature } from "@/lib/api"
-import { GeometryThumbnail } from "@/components/geometry-stage"
+import type { Batch, Dataset, Feature, Workspace } from "@/lib/api"
 
-export type LabView = "compare" | "scenes" | "generate" | "import" | "versions"
+export type LabView = "datasets" | "workbench" | "review" | "data"
+
+export type DatasetGroup = {
+  workspace: Workspace
+  datasets: Dataset[]
+}
 
 type LabSidebarProps = {
-  datasets: Dataset[]
+  datasetGroups: DatasetGroup[]
   dataset: Dataset
   batches: Batch[]
   features: Feature[]
@@ -53,15 +47,14 @@ type LabSidebarProps = {
 }
 
 const navigation = [
-  { id: "compare" as const, label: "Compare", icon: GitCompareArrows },
-  { id: "scenes" as const, label: "Scenes", icon: MapPinned },
-  { id: "generate" as const, label: "Generate", icon: Beaker },
-  { id: "import" as const, label: "Import", icon: FileUp },
-  { id: "versions" as const, label: "Versions", icon: Boxes },
+  { id: "datasets" as const, label: "Datasets", icon: Database },
+  { id: "workbench" as const, label: "Workbench", icon: GitCompareArrows },
+  { id: "review" as const, label: "Review queue", icon: MapPinned },
+  { id: "data" as const, label: "Data", icon: Layers3 },
 ]
 
 export function LabSidebar({
-  datasets,
+  datasetGroups,
   dataset,
   batches,
   features,
@@ -72,6 +65,7 @@ export function LabSidebar({
   onViewChange,
   onNewFeature,
 }: LabSidebarProps) {
+  const activeWorkspace = datasetGroups.find((group) => group.workspace.id === dataset.workspace_id)?.workspace
   const groups = [
     ...batches.map((batch) => ({ id: batch.id, name: batch.name, features: features.filter((feature) => feature.batch_id === batch.id) })),
     { id: "manual", name: "Manual", features: features.filter((feature) => !feature.batch_id) },
@@ -85,26 +79,35 @@ export function LabSidebar({
             <SidebarMenuButton className="h-12" size="lg">
               <span className="grid size-8 place-items-center rounded-lg bg-[#00796f] text-white"><MapPinned className="size-4" /></span>
               <span className="min-w-0 flex-1 text-left">
-                <span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/55">Dataset</span>
+                <span className="block truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/55">{activeWorkspace?.name ?? "Dataset"}</span>
                 <span className="block truncate font-semibold">{dataset.name}</span>
               </span>
               <ChevronsUpDown className="size-4 opacity-50" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuLabel>Local datasets</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {datasets.map((item) => (
-              <DropdownMenuItem key={item.id} onClick={() => onDatasetChange(item)}>
-                <Database /> {item.name}
-              </DropdownMenuItem>
+          <DropdownMenuContent align="start" className="max-h-[70vh] w-72 overflow-y-auto">
+            {datasetGroups.map((group, index) => (
+              <Fragment key={group.workspace.id}>
+                {index > 0 && <DropdownMenuSeparator />}
+                <DropdownMenuLabel>{group.workspace.name}</DropdownMenuLabel>
+                {group.datasets.map((item) => (
+                  <DropdownMenuItem className={item.id === dataset.id ? "bg-accent" : undefined} key={item.id} onClick={() => onDatasetChange(item)}>
+                    <Database />
+                    <span className="min-w-0">
+                      <span className="block truncate">{item.name}</span>
+                      {item.description && <span className="block truncate text-[11px] text-muted-foreground">{item.description}</span>}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+                {!group.datasets.length && <p className="px-2 py-2 text-xs text-muted-foreground">No datasets</p>}
+              </Fragment>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Lab</SidebarGroupLabel>
+          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {navigation.map((item) => (
@@ -131,10 +134,10 @@ export function LabSidebar({
                     <SidebarMenuItem key={feature.id}>
                       <SidebarMenuButton
                         className="h-12"
-                        isActive={feature.id === selectedFeatureId}
+                        isActive={feature.id === selectedFeatureId && view === "workbench"}
                         onClick={() => {
                           onFeatureChange(feature)
-                          onViewChange("compare")
+                          onViewChange("workbench")
                         }}
                       >
                         <GeometryThumbnail geometry={feature.current_revision.geometry} />
@@ -147,24 +150,16 @@ export function LabSidebar({
                   ))}
                 </Fragment>
               ))}
-              {!features.length && (
-                <li className="px-2 py-8 text-center text-xs leading-5 text-muted-foreground">
-                  Draw, import, or generate your first geometry.
-                </li>
-              )}
+              {!features.length && <li className="px-2 py-8 text-center text-xs leading-5 text-muted-foreground">Draw, import, or generate your first geometry.</li>}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border/70">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton tooltip="Local storage"><Layers3 /><span>Local storage</span></SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton tooltip="Settings"><Settings2 /><span>Settings</span></SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarFooter className="border-t border-sidebar-border/70 p-3 group-data-[collapsible=icon]:p-2">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground group-data-[collapsible=icon]:justify-center">
+          <CircleDot className="size-3 fill-emerald-500 text-emerald-600" />
+          <span className="group-data-[collapsible=icon]:hidden">Local · SQLite</span>
+        </div>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

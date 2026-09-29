@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react"
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider, useQueries, useQuery } from "@tanstack/react-query"
 import { CircleDot, PanelLeft, PanelRight, RefreshCw } from "lucide-react"
 
 import { CompareView } from "@/components/compare-view"
+import { DatasetCatalog } from "@/components/dataset-catalog"
+import { DatasetDataView } from "@/components/dataset-data-view"
 import { GenerateView } from "@/components/generate-view"
 import { ImportView } from "@/components/import-view"
 import { InspectorSidebar } from "@/components/inspector-sidebar"
-import { LabSidebar, type LabView } from "@/components/lab-sidebar"
+import { LabSidebar, type DatasetGroup, type LabView } from "@/components/lab-sidebar"
 import { Onboarding } from "@/components/onboarding"
 import { VersionsView } from "@/components/versions-view"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -39,16 +41,21 @@ export function App() {
 
 function DatasetLab() {
   const workspacesQuery = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces })
-  const workspace = workspacesQuery.data?.[0]
-  const datasetsQuery = useQuery({
-    queryKey: ["datasets", workspace?.id],
-    queryFn: () => api.datasets(workspace!.id),
-    enabled: Boolean(workspace),
+  const datasetQueries = useQueries({
+    queries: (workspacesQuery.data ?? []).map((workspace) => ({
+      queryKey: ["datasets", workspace.id],
+      queryFn: () => api.datasets(workspace.id),
+    })),
   })
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(
     () => localStorage.getItem("geoscalex.dataset"),
   )
-  const dataset = datasetsQuery.data?.find((item) => item.id === selectedDatasetId) ?? datasetsQuery.data?.[0]
+  const datasetGroups: DatasetGroup[] = (workspacesQuery.data ?? []).map((workspace, index) => ({
+    workspace,
+    datasets: datasetQueries[index]?.data ?? [],
+  }))
+  const datasets = datasetGroups.flatMap((group) => group.datasets)
+  const dataset = datasets.find((item) => item.id === selectedDatasetId) ?? datasets[0]
 
   useEffect(() => {
     if (!dataset) return
@@ -56,37 +63,39 @@ function DatasetLab() {
     localStorage.setItem("geoscalex.dataset", dataset.id)
   }, [dataset])
 
-  if (workspacesQuery.isLoading || (workspace && datasetsQuery.isLoading)) {
+  if (workspacesQuery.isLoading || datasetQueries.some((query) => query.isLoading)) {
     return <main className="grid min-h-screen place-content-center bg-[#e8e4da] text-center"><RefreshCw className="mx-auto size-5 animate-spin text-[#00796f]" /><p className="mt-3 text-sm font-medium">Opening local Dataset Lab…</p></main>
   }
-  if (workspacesQuery.error || datasetsQuery.error) {
-    const error = workspacesQuery.error ?? datasetsQuery.error
+  const datasetError = datasetQueries.find((query) => query.error)?.error
+  if (workspacesQuery.error || datasetError) {
+    const error = workspacesQuery.error ?? datasetError
     return <main className="grid min-h-screen place-content-center bg-[#e8e4da] p-6"><Alert variant="destructive"><AlertDescription>{error instanceof Error ? error.message : "The local API is unavailable."}</AlertDescription></Alert></main>
   }
-  if (!workspace || !dataset) {
+  const firstWorkspace = workspacesQuery.data?.[0]
+  if (!firstWorkspace || !dataset) {
     return (
       <Onboarding
         onCreate={async (workspaceName, datasetName) => {
-          const activeWorkspace = workspace ?? (await api.createWorkspace(workspaceName))
+          const activeWorkspace = firstWorkspace ?? (await api.createWorkspace(workspaceName))
           const created = await api.createDataset(activeWorkspace.id, datasetName, "Created in Dataset Lab")
           setSelectedDatasetId(created.id)
           await queryClient.invalidateQueries()
         }}
-        workspaceExists={Boolean(workspace)}
+        workspaceExists={Boolean(firstWorkspace)}
       />
     )
   }
-  return <WorkspaceShell dataset={dataset} datasets={datasetsQuery.data ?? []} onDatasetChange={(next) => setSelectedDatasetId(next.id)} />
+  return <WorkspaceShell dataset={dataset} datasetGroups={datasetGroups} onDatasetChange={(next) => setSelectedDatasetId(next.id)} />
 }
 
 type WorkspaceShellProps = {
   dataset: Dataset
-  datasets: Dataset[]
+  datasetGroups: DatasetGroup[]
   onDatasetChange: (dataset: Dataset) => void
 }
 
-function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellProps) {
-  const [view, setView] = useState<LabView>("compare")
+function WorkspaceShell({ dataset, datasetGroups, onDatasetChange }: WorkspaceShellProps) {
+  const [view, setView] = useState<LabView>("workbench")
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null)
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null)
   const [budget, setBudget] = useState(12)
@@ -198,7 +207,7 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
     }
     setSelectedSceneId(scene.id)
     setSelectedFeatureId(scene.target_feature_id)
-    setView("compare")
+    setView("workbench")
   }
 
   async function saveGeometry(name: string, geometry: Geometry) {
@@ -220,20 +229,21 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
 
   return (
     <SidebarProvider onOpenChange={setLeftOpen} open={leftOpen}>
-      <LabSidebar batches={batchesQuery.data ?? []} dataset={dataset} datasets={datasets} features={features} onDatasetChange={onDatasetChange} onFeatureChange={(feature: Feature) => { setSelectedSceneId(null); setSelectedFeatureId(feature.id) }} onNewFeature={() => setEditor("new")} onViewChange={setView} selectedFeatureId={selectedFeature?.id ?? null} view={view} />
+      <LabSidebar batches={batchesQuery.data ?? []} dataset={dataset} datasetGroups={datasetGroups} features={features} onDatasetChange={onDatasetChange} onFeatureChange={(feature: Feature) => { setSelectedSceneId(null); setSelectedFeatureId(feature.id) }} onNewFeature={() => setEditor("new")} onViewChange={setView} selectedFeatureId={selectedFeature?.id ?? null} view={view} />
       <SidebarProvider className="min-w-0 flex-1" onOpenChange={setRightOpen} open={rightOpen}>
         <SidebarInset className="min-w-0 bg-[#f4f2ec]">
           <header className="sticky top-0 z-20 flex h-[65px] items-center gap-3 border-b bg-background/90 px-3 backdrop-blur lg:px-5">
             <Button aria-label="Toggle dataset sidebar" onClick={() => setLeftOpen((open) => !open)} size="icon-sm" variant="ghost"><PanelLeft /></Button>
             <div className="h-5 w-px bg-border" />
-            <div className="min-w-0"><p className="truncate text-sm font-semibold">{dataset.name}</p><p className="truncate text-[11px] text-muted-foreground">{view === "compare" ? activeScene?.name ?? selectedFeature?.name ?? "Workbench" : view}</p></div>
+            <div className="min-w-0"><p className="truncate text-sm font-semibold">{dataset.name}</p><p className="truncate text-[11px] text-muted-foreground">{view === "workbench" ? activeScene?.name ?? selectedFeature?.name ?? "Workbench" : view === "review" ? "Review queue" : view === "data" ? "Data management" : "Dataset library"}</p></div>
             <div className="ml-auto flex items-center gap-2">
               <span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"><CircleDot className="size-3 fill-emerald-500 text-emerald-600" /> localhost</span>
               <Button aria-label="Toggle inspector" onClick={() => setRightOpen((open) => !open)} size="icon-sm" variant="ghost"><PanelRight /></Button>
             </div>
           </header>
           {notice && <div className="fixed right-5 top-20 z-50 rounded-lg bg-slate-950 px-4 py-2 text-sm text-white shadow-xl">{notice}</div>}
-          {view === "compare" && <CompareView candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} labelA={methodsQuery.data?.find((method) => method.id === methodA)?.name} labelB={methodsQuery.data?.find((method) => method.id === methodB)?.name} scene={activeScene} onAnnotate={async (review: ReviewDraft) => {
+          {view === "datasets" && <DatasetCatalog groups={datasetGroups} onOpen={(nextDataset) => { onDatasetChange(nextDataset); setView("workbench") }} selectedDatasetId={dataset.id} />}
+          {view === "workbench" && <CompareView candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} labelA={methodsQuery.data?.find((method) => method.id === methodA)?.name} labelB={methodsQuery.data?.find((method) => method.id === methodB)?.name} scene={activeScene} onAnnotate={async (review: ReviewDraft) => {
             if (!selectedFeature || !annotationCandidateA || !annotationCandidateB) return
             if (activeScene) {
               await api.createSceneReview({ scene_id: activeScene.id, revision_id: selectedFeature.current_revision.id, candidate_a_id: annotationCandidateA.id, candidate_b_id: annotationCandidateB.id, choice: review.choice, acceptability: review.acceptability, failure_tags: review.failureTags, comment: review.comment, viewport: { ...activeScene.viewport, vertex_budget: resolvedBudget } })
@@ -243,15 +253,17 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
               setNotice("Preference recorded")
             }
           }} />}
-          {view === "scenes" && <Suspense fallback={<div className="grid min-h-[calc(100vh-65px)] place-content-center text-sm text-muted-foreground">Opening scene builder…</div>}><ScenesView batches={batchesQuery.data ?? []} datasetId={dataset.id} features={features} jobs={jobsQuery.data ?? []} onArchive={async (scene: Scene) => { await api.archiveScene(scene.id); if (selectedSceneId === scene.id) setSelectedSceneId(null); await scenesQuery.refetch(); setNotice("Scene archived") }} onCancelExtraction={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onCreate={async (input) => { const scene = await api.createScene(input); await scenesQuery.refetch(); return scene }} onExtractionQueued={async () => { await jobsQuery.refetch(); setNotice("Scene extraction queued") }} onRefreshJobs={() => { void jobsQuery.refetch(); void scenesQuery.refetch() }} onReview={openSceneReview} onSelect={(scene: Scene) => setSelectedSceneId(scene.id)} scenes={scenes} selectedSceneId={selectedSceneId} /></Suspense>}
-          {view === "generate" && <GenerateView generators={generatorsQuery.data ?? []} jobs={jobsQuery.data ?? []} onCancel={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onRefresh={() => { void jobsQuery.refetch(); void featuresQuery.refetch() }} onRun={async (generatorId, batchName, count, seed, parameters) => {
-            await api.runGenerator({ dataset_id: dataset.id, generator_id: generatorId, batch_name: batchName, count, seed, parameters })
-            await jobsQuery.refetch(); setNotice("Generator run queued")
-          }} />}
-          {view === "import" && <ImportView onImport={async (options, collection) => { const result = await api.importGeoJson(dataset.id, options, collection); await refreshFeatures(); return result }} />}
-          {view === "versions" && <VersionsView featureCount={features.length} onPublish={async (splitSeed) => { await api.publish(dataset.id, splitSeed); await versionsQuery.refetch() }} sceneCount={scenes.length} versions={versionsQuery.data ?? []} />}
+          {view === "review" && <Suspense fallback={<div className="grid min-h-[calc(100vh-65px)] place-content-center text-sm text-muted-foreground">Opening review queue…</div>}><ScenesView batches={batchesQuery.data ?? []} datasetId={dataset.id} features={features} jobs={jobsQuery.data ?? []} onArchive={async (scene: Scene) => { await api.archiveScene(scene.id); if (selectedSceneId === scene.id) setSelectedSceneId(null); await scenesQuery.refetch(); setNotice("Scene archived") }} onCancelExtraction={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onCreate={async (input) => { const scene = await api.createScene(input); await scenesQuery.refetch(); return scene }} onExtractionQueued={async () => { await jobsQuery.refetch(); setNotice("Scene extraction queued") }} onRefreshJobs={() => { void jobsQuery.refetch(); void scenesQuery.refetch() }} onReview={openSceneReview} onSelect={(scene: Scene) => setSelectedSceneId(scene.id)} scenes={scenes} selectedSceneId={selectedSceneId} /></Suspense>}
+          {view === "data" && <DatasetDataView
+            generateView={<GenerateView generators={generatorsQuery.data ?? []} jobs={jobsQuery.data ?? []} onCancel={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onRefresh={() => { void jobsQuery.refetch(); void featuresQuery.refetch() }} onRun={async (generatorId, batchName, count, seed, parameters) => {
+              await api.runGenerator({ dataset_id: dataset.id, generator_id: generatorId, batch_name: batchName, count, seed, parameters })
+              await jobsQuery.refetch(); setNotice("Generator run queued")
+            }} />}
+            importView={<ImportView onImport={async (options, collection) => { const result = await api.importGeoJson(dataset.id, options, collection); await refreshFeatures(); return result }} />}
+            versionsView={<VersionsView featureCount={features.length} onPublish={async (splitSeed) => { await api.publish(dataset.id, splitSeed); await versionsQuery.refetch() }} sceneCount={scenes.length} versions={versionsQuery.data ?? []} />}
+          />}
         </SidebarInset>
-        {view === "compare" && <InspectorSidebar budget={resolvedBudget} budgetKind={budgetKind} busy={candidateBusy} candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} methodA={methodA} methodB={methodB} methods={methodsQuery.data ?? []} onAddHole={() => setEditor("hole")} onArchive={async () => { if (selectedFeature) { await api.archiveFeature(selectedFeature.id); await refreshFeatures("Feature archived") } }} onBudgetChange={setBudget} onBudgetKindChange={setBudgetKind} onBuildCandidates={() => { void buildCandidates() }} onDuplicate={async () => { if (selectedFeature) { const copy = await api.duplicateFeature(selectedFeature.id); await refreshFeatures("Feature duplicated"); setSelectedFeatureId(copy.id) } }} onEdit={() => setEditor("edit")} onMethodAChange={setMethodA} onMethodBChange={setMethodB} onRestoreRevision={async (revisionId) => { if (selectedFeature) { await api.restoreRevision(selectedFeature.id, revisionId); await refreshFeatures("Revision restored"); await revisionsQuery.refetch() } }} onRetentionRatioChange={setRetentionRatio} retentionRatio={retentionRatio} revisions={revisionsQuery.data ?? []} />}
+        {view === "workbench" && <InspectorSidebar budget={resolvedBudget} budgetKind={budgetKind} busy={candidateBusy} candidateA={candidateA} candidateB={candidateB} feature={selectedFeature} methodA={methodA} methodB={methodB} methods={methodsQuery.data ?? []} onAddHole={() => setEditor("hole")} onArchive={async () => { if (selectedFeature) { await api.archiveFeature(selectedFeature.id); await refreshFeatures("Feature archived") } }} onBudgetChange={setBudget} onBudgetKindChange={setBudgetKind} onBuildCandidates={() => { void buildCandidates() }} onDuplicate={async () => { if (selectedFeature) { const copy = await api.duplicateFeature(selectedFeature.id); await refreshFeatures("Feature duplicated"); setSelectedFeatureId(copy.id) } }} onEdit={() => setEditor("edit")} onMethodAChange={setMethodA} onMethodBChange={setMethodB} onRestoreRevision={async (revisionId) => { if (selectedFeature) { await api.restoreRevision(selectedFeature.id, revisionId); await refreshFeatures("Revision restored"); await revisionsQuery.refetch() } }} onRetentionRatioChange={setRetentionRatio} retentionRatio={retentionRatio} revisions={revisionsQuery.data ?? []} />}
       </SidebarProvider>
       {editor && (
         <Suspense fallback={null}>
