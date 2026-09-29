@@ -156,9 +156,7 @@ def _fingerprint(config: SceneExtractionCreate, target: ExtractionFeature) -> st
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _location_group(
-    config: SceneExtractionCreate, target: ExtractionFeature
-) -> str:
+def _location_group(config: SceneExtractionCreate, target: ExtractionFeature) -> str:
     centroid = target.analysis_geometry.centroid
     cell_size = max(config.radius * 2, 1e-9)
     cell_x = math.floor(centroid.x / cell_size)
@@ -166,7 +164,7 @@ def _location_group(
     return f"{config.location_group_prefix}:{target.group_key[0]}:{cell_x}:{cell_y}"
 
 
-async def _load_features(
+async def load_extraction_features(
     session: AsyncSession, dataset_id: str
 ) -> tuple[list[ExtractionFeature], int]:
     records = (
@@ -180,15 +178,11 @@ async def _load_features(
         )
     ).all()
     revision_ids = [
-        record.current_revision_id
-        for record in records
-        if record.current_revision_id is not None
+        record.current_revision_id for record in records if record.current_revision_id is not None
     ]
     revisions = (
         await session.scalars(
-            select(models.GeometryRevision).where(
-                models.GeometryRevision.id.in_(revision_ids)
-            )
+            select(models.GeometryRevision).where(models.GeometryRevision.id.in_(revision_ids))
         )
     ).all()
     revisions_by_id = {revision.id: revision for revision in revisions}
@@ -244,7 +238,7 @@ async def build_extraction_plan(
         if batch is None or batch.dataset_id != str(config.dataset_id):
             raise ValueError("Target batch must belong to the extraction dataset")
 
-    features, incompatible = await _load_features(session, str(config.dataset_id))
+    features, incompatible = await load_extraction_features(session, str(config.dataset_id))
     existing_targets = set(
         (
             await session.scalars(
@@ -256,15 +250,17 @@ async def build_extraction_plan(
         ).all()
     )
     target_types = set(config.geometry_types)
+    requested_ids = [str(feature_id) for feature_id in config.target_feature_ids]
+    requested_order = {feature_id: index for index, feature_id in enumerate(requested_ids)}
     targets = [
         feature
         for feature in features
         if feature.geometry_type in target_types
-        and (
-            config.target_batch_id is None
-            or feature.batch_id == str(config.target_batch_id)
-        )
+        and (config.target_batch_id is None or feature.batch_id == str(config.target_batch_id))
+        and (not requested_ids or feature.id in requested_order)
     ]
+    if requested_ids:
+        targets.sort(key=lambda feature: requested_order[feature.id])
     skipped_existing = 0
     if config.skip_existing_targets:
         skipped_existing = sum(target.id in existing_targets for target in targets)
@@ -311,9 +307,7 @@ async def build_extraction_plan(
             proximity = max(0.0, 1 - distance / config.radius)
             importance = min(
                 1.0,
-                0.25
-                + 0.65 * proximity
-                + (0.1 if role != SceneRole.BACKGROUND else 0),
+                0.25 + 0.65 * proximity + (0.1 if role != SceneRole.BACKGROUND else 0),
             )
             members.append(
                 SceneMemberCreate(

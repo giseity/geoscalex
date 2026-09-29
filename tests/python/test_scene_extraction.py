@@ -166,3 +166,51 @@ async def test_extraction_reports_isolated_targets(tmp_path: Path) -> None:
     assert preview.proposed_scenes == 0
     assert preview.isolated_targets == 1
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_extraction_honors_explicit_target_priority(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.sqlite3'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with sessions() as session:
+        workspace = await create_workspace(session, WorkspaceCreate(name="Research"))
+        dataset = await create_dataset(
+            session, DatasetCreate(workspace_id=workspace.id, name="Prioritized")
+        )
+        first = await create_feature(
+            session,
+            FeatureCreate(
+                dataset_id=dataset.id,
+                name="First",
+                geometry={"type": "LineString", "coordinates": [[0, 0], [10, 0]]},
+                coordinate_space="local",
+                crs=None,
+            ),
+        )
+        second = await create_feature(
+            session,
+            FeatureCreate(
+                dataset_id=dataset.id,
+                name="Second",
+                geometry={"type": "LineString", "coordinates": [[0, 1], [10, 1]]},
+                coordinate_space="local",
+                crs=None,
+            ),
+        )
+        plan = await build_extraction_plan(
+            session,
+            SceneExtractionCreate(
+                dataset_id=dataset.id,
+                target_feature_ids=[second.id, first.id],
+                radius=5,
+            ),
+        )
+
+    assert [item.proposal.target_feature_id for item in plan.scenes] == [
+        second.id,
+        first.id,
+    ]
+    await engine.dispose()

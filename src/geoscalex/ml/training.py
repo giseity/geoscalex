@@ -25,7 +25,24 @@ MODEL_PROFILES = {
     ),
     "standard": ModelConfig(),
 }
-TRAINING_OBJECTIVES = ("rank-regression", "hybrid-ranking")
+TRAINING_OBJECTIVES = ("rank-regression", "hybrid-ranking", "cutoff-weighted")
+
+
+def _cutoff_weighted_loss(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    retained: torch.Tensor,
+    ratio: torch.Tensor,
+) -> torch.Tensor:
+    """Emphasize mistakes close to the keep/remove decision boundary."""
+    if not retained.any() or retained.all():
+        return functional.smooth_l1_loss(prediction, target)
+    cutoff = (target[retained].min() + target[~retained].max()) / 2.0
+    distance = (target - cutoff).abs()
+    low_budget_boost = 2.0 if float(ratio.detach().cpu()) <= 0.25 else 1.0
+    weights = 1.0 + 4.0 * low_budget_boost * torch.exp(-distance / 0.1)
+    per_vertex = functional.smooth_l1_loss(prediction, target, reduction="none")
+    return (per_vertex * weights).sum() / weights.sum()
 
 
 def _batches(
@@ -54,10 +71,19 @@ def _losses(
     listwise_losses: list[torch.Tensor] = []
     topk_losses: list[torch.Tensor] = []
     boundary_losses: list[torch.Tensor] = []
+    cutoff_losses: list[torch.Tensor] = []
     for index in range(importance.shape[0]):
         prediction = importance[index][valid[index]]
         target = tensors["importance"][index][valid[index]]
         retained = tensors["keep_mask"][index][valid[index]]
+        cutoff_losses.append(
+            _cutoff_weighted_loss(
+                prediction,
+                target,
+                retained,
+                tensors["budget_ratio"][index],
+            )
+        )
         target_distribution = functional.softmax(target / 0.1, dim=0)
         listwise_losses.append(
             -(target_distribution * functional.log_softmax(prediction, dim=0)).sum()
@@ -84,17 +110,16 @@ def _losses(
     listwise_loss = torch.stack(listwise_losses).mean()
     topk_loss = torch.stack(topk_losses).mean()
     boundary_loss = torch.stack(boundary_losses).mean()
-    regression_loss = functional.smooth_l1_loss(
-        importance[valid], tensors["importance"][valid]
-    )
-    importance_loss = (
-        regression_loss
-        if objective == "rank-regression"
-        else regression_loss
-        + 0.005 * listwise_loss
-        + 0.05 * topk_loss
-        + 0.005 * boundary_loss
-    )
+    cutoff_loss = torch.stack(cutoff_losses).mean()
+    regression_loss = functional.smooth_l1_loss(importance[valid], tensors["importance"][valid])
+    if objective == "rank-regression":
+        importance_loss = regression_loss
+    elif objective == "cutoff-weighted":
+        importance_loss = cutoff_loss
+    else:
+        importance_loss = (
+            regression_loss + 0.005 * listwise_loss + 0.05 * topk_loss + 0.005 * boundary_loss
+        )
     movement_mask = tensors["movement_mask"] & valid
     if movement_mask.any():
         movement_loss = functional.smooth_l1_loss(
@@ -107,6 +132,7 @@ def _losses(
     return total, {
         "importance": float(importance_loss.detach().cpu()),
         "regression": float(regression_loss.detach().cpu()),
+        "cutoff_weighted": float(cutoff_loss.detach().cpu()),
         "listwise": float(listwise_loss.detach().cpu()),
         "topk": float(topk_loss.detach().cpu()),
         "boundary": float(boundary_loss.detach().cpu()),

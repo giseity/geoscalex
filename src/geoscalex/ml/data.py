@@ -89,9 +89,7 @@ def select_importance_indices(
     return sorted(np.argsort(-scores, kind="stable")[:budget].tolist())
 
 
-def _teacher_quality(
-    geometry: dict[str, Any], importance: np.ndarray, method: str
-) -> float:
+def _teacher_quality(geometry: dict[str, Any], importance: np.ndarray, method: str) -> float:
     analysis = validate_geometry(geometry)
     minimum = 3 if analysis.geometry_type == "Polygon" else 2
     min_x, min_y, max_x, max_y = analysis.bounds
@@ -113,18 +111,14 @@ def _teacher_quality(
     return float(np.mean(distances))
 
 
-def _select_teacher(
+def select_quality_teacher(
     geometry: dict[str, Any],
     dp_importance: np.ndarray,
     vw_importance: np.ndarray,
 ) -> tuple[str, np.ndarray, float]:
     qualities = {
-        "douglas-peucker": _teacher_quality(
-            geometry, dp_importance, "douglas-peucker"
-        ),
-        "visvalingam-whyatt": _teacher_quality(
-            geometry, vw_importance, "visvalingam-whyatt"
-        ),
+        "douglas-peucker": _teacher_quality(geometry, dp_importance, "douglas-peucker"),
+        "visvalingam-whyatt": _teacher_quality(geometry, vw_importance, "visvalingam-whyatt"),
     }
     method = min(qualities, key=lambda name: (qualities[name], name))
     importance = dp_importance if method == "douglas-peucker" else vw_importance
@@ -154,14 +148,10 @@ def load_samples(
         candidates: list[dict[str, Any] | None] = (
             [*reviewed_candidates] if reviewed_candidates else [None]
         )
-        dp_importance = rank_importance(
-            row["dp_scores"], count, protected_value=1.1
-        )
-        vw_importance = rank_importance(
-            row["vw_scores"], count, protected_value=1.1
-        )
+        dp_importance = rank_importance(row["dp_scores"], count, protected_value=1.1)
+        vw_importance = rank_importance(row["vw_scores"], count, protected_value=1.1)
         consensus = consensus_importance(row["dp_scores"], row["vw_scores"], count)
-        teacher_method, importance, teacher_quality = _select_teacher(
+        teacher_method, importance, teacher_quality = select_quality_teacher(
             geometry, dp_importance, vw_importance
         )
         for candidate_row in candidates:

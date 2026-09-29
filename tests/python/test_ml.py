@@ -19,7 +19,8 @@ from geoscalex.ml.experiment import run_experiment
 from geoscalex.ml.features import FEATURE_DIM, vertex_features
 from geoscalex.ml.inference import infer_geometry, load_checkpoint
 from geoscalex.ml.model import ModelConfig, RemoveMoveEncoder
-from geoscalex.ml.training import MODEL_PROFILES, train
+from geoscalex.ml.review_batch import score_review_priority
+from geoscalex.ml.training import MODEL_PROFILES, _cutoff_weighted_loss, train
 from geoscalex.simplification.keep_move import normalize_for_model
 
 
@@ -80,6 +81,36 @@ def test_encoder_starts_with_zero_movement_and_emits_per_vertex_scores() -> None
     assert torch.count_nonzero(movement) == 0
 
 
+def test_cutoff_weighted_loss_emphasizes_low_budget_boundary_errors() -> None:
+    target = torch.tensor([1.1, 0.8, 0.51, 0.49, 0.1])
+    retained = torch.tensor([True, True, True, False, False])
+    near_boundary = target.clone()
+    near_boundary[2] += 0.2
+    far_from_boundary = target.clone()
+    far_from_boundary[4] += 0.2
+
+    near_loss = _cutoff_weighted_loss(near_boundary, target, retained, torch.tensor(0.1))
+    far_loss = _cutoff_weighted_loss(far_from_boundary, target, retained, torch.tensor(0.1))
+
+    assert near_loss > far_loss
+
+
+def test_review_priority_records_low_budget_disagreement_components() -> None:
+    model = RemoveMoveEncoder(
+        ModelConfig(hidden_dim=16, layers=1, heads=2, feedforward_dim=32, dropout=0)
+    )
+    score = score_review_priority(
+        model,
+        LINE,
+        feature_id="feature-1",
+        feature_name="Fixture",
+    )
+
+    assert score.priority >= 0
+    assert [item["retention_ratio"] for item in score.ratios] == [0.1, 0.25]
+    assert all("teacher_method" in item for item in score.ratios)
+
+
 def test_checkpoint_inference_preserves_line_endpoints_and_exact_budget(tmp_path: Path) -> None:
     config = ModelConfig(hidden_dim=16, layers=1, heads=2, feedforward_dim=32, dropout=0)
     model = RemoveMoveEncoder(config)
@@ -135,24 +166,15 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     assert evaluation["budgets"] == [0.5]
     assert evaluation["encoder_cold_start_latency_ms"] >= 0
     assert evaluation["methods"]["encoder-remove-move"]["candidate_count"] == 1
-    assert (
-        evaluation["methods"]["encoder-remove-move"]
-        ["mean_quality_teacher_topk_agreement"]
-        >= 0
-    )
+    assert evaluation["methods"]["encoder-remove-move"]["mean_quality_teacher_topk_agreement"] >= 0
     assert evaluation["methods"]["teacher-quality-oracle"]["candidate_count"] == 1
     assert evaluation["methods"]["teacher-consensus-oracle"]["candidate_count"] == 1
-    assert set(evaluation["methods"]["encoder-remove-move"]["by_geometry_type"]) == {
-        "LineString"
-    }
+    assert set(evaluation["methods"]["encoder-remove-move"]["by_geometry_type"]) == {"LineString"}
     assert evaluation["teacher_oracle_note"]
     assert evaluation["paired_comparisons"]["douglas-peucker"]["pair_count"] == 1
+    assert evaluation["paired_comparisons"]["teacher-consensus-oracle"]["pair_count"] == 1
     assert (
-        evaluation["paired_comparisons"]["teacher-consensus-oracle"]["pair_count"] == 1
-    )
-    assert (
-        evaluation["teacher_comparisons"]["teacher-quality-oracle"]
-        ["douglas-peucker"]["pair_count"]
+        evaluation["teacher_comparisons"]["teacher-quality-oracle"]["douglas-peucker"]["pair_count"]
         == 1
     )
     assert evaluation["teacher_selection_counts"] == {"douglas-peucker": 1}
