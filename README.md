@@ -38,12 +38,20 @@ uv run geoscalex-evaluate .geoscalex/exports/<dataset-id>/v1 \
   --output .geoscalex/reports/remove-move-v1.json
 ```
 
-Set `GEOSCALEX_ENCODER_CHECKPOINT` to the checkpoint path and restart the API and worker. The
-`encoder-remove-move` option then appears in the same matched-budget comparison UI as the
-classical and DeepSeek methods. The project pins the optional dependency to PyTorch's CPU index for
-reproducible development on this machine. `--device cuda` remains supported by the code; preparing
-a CUDA environment requires changing the explicit `pytorch-cpu` source to a compatible CUDA index
-and regenerating the lockfile.
+Point `GEOSCALEX_ENCODER_CHECKPOINT` at a stable local alias such as
+`.geoscalex/checkpoints/active.pt`. Promote an experiment by changing only that alias:
+
+```bash
+mkdir -p .geoscalex/checkpoints
+ln -sfn ../experiments/<experiment-id>/checkpoint.pt .geoscalex/checkpoints/active.pt
+```
+
+The worker resolves the alias for each inference job, so changing its target selects a new
+checkpoint without editing `.env`. The `encoder-remove-move` option appears in the same
+matched-budget comparison UI as the classical and DeepSeek methods. The project pins the optional
+dependency to PyTorch's CPU index for reproducible development on this machine. `--device cuda`
+remains supported by the code; preparing a CUDA environment requires changing the explicit
+`pytorch-cpu` source to a compatible CUDA index and regenerating the lockfile.
 
 Create and audit a deterministic synthetic pilot before training:
 
