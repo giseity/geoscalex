@@ -181,7 +181,7 @@ export function InspectorSidebar({
                     A and B both target {budget} vertices. A currently removes {reduction}% of source vertices.
                   </p>
                 )}
-                {hasHoles && <p className="text-xs leading-5 text-amber-700">Learned and DeepSeek methods are unavailable for polygons with holes in v0.4.</p>}
+                {hasHoles && <p className="text-xs leading-5 text-amber-700">Learned and DeepSeek methods are currently unavailable for polygons with holes.</p>}
                 {(candidateA || candidateB) && (
                   <div className="grid grid-cols-2 gap-2">
                     <Metric label="A achieved" value={candidateA ? Number(candidateA.metrics.vertex_count) : "—"} />
