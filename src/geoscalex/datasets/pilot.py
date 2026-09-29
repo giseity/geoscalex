@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import random
 import sys
 from collections.abc import Callable
@@ -28,6 +29,7 @@ LINE_GENERATORS = (
     "zigzag",
     "hairpin",
 )
+POLYGON_GENERATORS = ("irregular-polygon", "urban-footprint", "indented-polygon")
 STRATA = ("low", "medium", "high")
 
 
@@ -95,6 +97,23 @@ def _parameters(generator_id: str, stratum: str, rng: random.Random) -> dict[str
             "irregularity": round(rng.uniform(0.04, 0.55), 6),
             "lobes": rng.randint(2, 14),
         }
+    if generator_id == "urban-footprint":
+        return {
+            "vertices": rng.randint(low, high),
+            "width": round(rng.uniform(3.0, 30.0), 6),
+            "height": round(rng.uniform(2.0, 18.0), 6),
+            "squareness": round(rng.uniform(2.5, 12.0), 6),
+            "irregularity": round(rng.uniform(0.005, 0.12), 6),
+            "rotation": round(rng.uniform(-math.pi, math.pi), 6),
+        }
+    if generator_id == "indented-polygon":
+        return {
+            "vertices": rng.randint(max(24, low), high),
+            "radius": round(rng.uniform(2.0, 20.0), 6),
+            "depth": round(rng.uniform(0.2, 0.7), 6),
+            "spread": round(rng.uniform(0.2, 0.9), 6),
+            "irregularity": round(rng.uniform(0.01, 0.18), 6),
+        }
     raise LookupError(f"Pilot recipe does not support generator {generator_id}")
 
 
@@ -147,7 +166,7 @@ async def build_pilot(
     polygon_count = int(config.count * config.polygon_fraction + 0.5)
     line_count = config.count - polygon_count
     counts = _allocation(line_count, LINE_GENERATORS)
-    counts["irregular-polygon"] = polygon_count
+    counts.update(_allocation(polygon_count, POLYGON_GENERATORS))
     created = 0
     batch_cache: dict[str, str] = {}
     group_families: dict[str, str] = {}

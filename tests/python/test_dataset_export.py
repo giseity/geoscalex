@@ -15,6 +15,7 @@ from geoscalex.datasets.audit import audit_export
 from geoscalex.datasets.io import assign_split, publish_dataset
 from geoscalex.datasets.pilot import (
     LINE_GENERATORS,
+    POLYGON_GENERATORS,
     PilotConfig,
     _covered_split_seed,
     build_pilot,
@@ -150,7 +151,7 @@ def test_dataset_audit_rejects_cross_split_duplicate_geometry(tmp_path: Path) ->
 
 
 def test_pilot_split_seed_covers_every_generator_family() -> None:
-    families = (*LINE_GENERATORS, "irregular-polygon")
+    families = (*LINE_GENERATORS, *POLYGON_GENERATORS)
     groups = {
         f"synthetic-pilot-v1:{family}:{index:03d}": family
         for family in families
@@ -194,7 +195,7 @@ async def test_pilot_builder_creates_balanced_audited_export(tmp_path: Path) -> 
         assert audit["features"]["model_eligible"] == 30
         assert set(audit["features"]["generator_families"]) == {
             *LINE_GENERATORS,
-            "irregular-polygon",
+            *POLYGON_GENERATORS,
         }
     finally:
         settings.data_dir = old_data_dir

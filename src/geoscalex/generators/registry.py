@@ -58,6 +58,23 @@ class PolygonParameters(BaseModel):
     lobes: int = Field(default=5, ge=1, le=30)
 
 
+class FootprintParameters(BaseModel):
+    vertices: int = Field(default=64, ge=8, le=2000)
+    width: float = Field(default=8.0, gt=0, le=200)
+    height: float = Field(default=4.0, gt=0, le=200)
+    squareness: float = Field(default=4.0, ge=2, le=16)
+    irregularity: float = Field(default=0.04, ge=0, le=0.2)
+    rotation: float = Field(default=0.0, ge=-math.pi, le=math.pi)
+
+
+class IndentedPolygonParameters(BaseModel):
+    vertices: int = Field(default=96, ge=12, le=2000)
+    radius: float = Field(default=5.0, gt=0, le=100)
+    depth: float = Field(default=0.45, ge=0.1, le=0.75)
+    spread: float = Field(default=0.45, ge=0.15, le=1.2)
+    irregularity: float = Field(default=0.08, ge=0, le=0.25)
+
+
 class HoledPolygonParameters(PolygonParameters):
     holes: int = Field(default=2, ge=1, le=8)
     hole_radius: float = Field(default=0.45, gt=0, le=2)
@@ -139,6 +156,47 @@ def irregular_polygon(parameters: BaseModel, rng: random.Random) -> dict[str, An
         ring.append(
             [p.radius * modulation * math.cos(angle), p.radius * modulation * math.sin(angle)]
         )
+    ring.append(ring[0])
+    return {"type": "Polygon", "coordinates": [ring]}
+
+
+def urban_footprint(parameters: BaseModel, rng: random.Random) -> dict[str, Any]:
+    p = FootprintParameters.model_validate(parameters)
+    cosine_rotation = math.cos(p.rotation)
+    sine_rotation = math.sin(p.rotation)
+    exponent = 2 / p.squareness
+    ring: list[list[float]] = []
+    for index in range(p.vertices):
+        angle = math.tau * index / p.vertices
+        cosine, sine = math.cos(angle), math.sin(angle)
+        x = math.copysign(abs(cosine) ** exponent, cosine) * p.width / 2
+        y = math.copysign(abs(sine) ** exponent, sine) * p.height / 2
+        scale = 1 + rng.uniform(-p.irregularity, p.irregularity)
+        x, y = x * scale, y * scale
+        ring.append(
+            [
+                x * cosine_rotation - y * sine_rotation,
+                x * sine_rotation + y * cosine_rotation,
+            ]
+        )
+    ring.append(ring[0])
+    return {"type": "Polygon", "coordinates": [ring]}
+
+
+def indented_polygon(parameters: BaseModel, rng: random.Random) -> dict[str, Any]:
+    p = IndentedPolygonParameters.model_validate(parameters)
+    bay_angle = rng.uniform(0, math.tau)
+    phase = rng.uniform(0, math.tau)
+    ring: list[list[float]] = []
+    for index in range(p.vertices):
+        angle = math.tau * index / p.vertices
+        angular_distance = abs((angle - bay_angle + math.pi) % math.tau - math.pi)
+        indentation = p.depth * math.exp(-0.5 * (angular_distance / p.spread) ** 2)
+        texture = p.irregularity * (
+            0.65 * math.sin(3 * angle + phase) + 0.35 * math.sin(11 * angle - phase)
+        )
+        radius = p.radius * max(0.15, 1 - indentation + texture)
+        ring.append([radius * math.cos(angle), radius * math.sin(angle)])
     ring.append(ring[0])
     return {"type": "Polygon", "coordinates": [ring]}
 
@@ -249,6 +307,22 @@ generator_registry.register(
     "Polygon",
     PolygonParameters,
     irregular_polygon,
+)
+generator_registry.register(
+    "urban-footprint",
+    "Urban footprint",
+    "A dense superellipse ranging from rounded to building-like outlines.",
+    "Polygon",
+    FootprintParameters,
+    urban_footprint,
+)
+generator_registry.register(
+    "indented-polygon",
+    "Indented polygon",
+    "An exterior ring with a pronounced bay and multiscale edge texture.",
+    "Polygon",
+    IndentedPolygonParameters,
+    indented_polygon,
 )
 generator_registry.register(
     "polygon-with-holes",
