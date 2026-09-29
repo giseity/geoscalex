@@ -12,6 +12,7 @@ torch = pytest.importorskip("torch")
 
 from geoscalex.geometry.analysis import validate_geometry
 from geoscalex.ml.data import load_samples
+from geoscalex.ml.evaluation import evaluate
 from geoscalex.ml.features import FEATURE_DIM, vertex_features
 from geoscalex.ml.inference import infer_geometry, load_checkpoint
 from geoscalex.ml.model import ModelConfig, RemoveMoveEncoder
@@ -96,3 +97,6 @@ def test_training_writes_a_reloadable_checkpoint(tmp_path: Path) -> None:
     assert report["epochs_completed"] == 1
     assert metadata["train_samples"] == 1
     assert checkpoint.with_suffix(".pt.json").exists()
+    evaluation = evaluate(export_dir, checkpoint, split="train", ratios=(0.5,))
+    assert evaluation["budgets"] == [0.5]
+    assert evaluation["methods"]["encoder-remove-move"]["candidate_count"] == 1
