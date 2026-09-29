@@ -31,5 +31,6 @@ pnpm test
 pnpm build
 ```
 
-See [the Dataset Lab architecture](docs/dataset-lab-v0.1.md) and the
+See [the Dataset Lab architecture](docs/dataset-lab-v0.1.md), the
+[contextual scenes v0.2 contract](docs/contextual-scenes-v0.2.md), and the
 [research proposal](adaptive-neural-gis-generalization.md).
