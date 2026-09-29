@@ -181,6 +181,26 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
     } finally { setCandidateBusy(false) }
   }
 
+  function openSceneReview(scene: Scene) {
+    const priority = scene.provenance.review_priority
+    if (priority && typeof priority === "object" && "ratios" in priority && Array.isArray(priority.ratios)) {
+      const firstRatio = priority.ratios[0]
+      if (firstRatio && typeof firstRatio === "object") {
+        if ("retention_ratio" in firstRatio && typeof firstRatio.retention_ratio === "number") {
+          setBudgetKind("retention-ratio")
+          setRetentionRatio(firstRatio.retention_ratio)
+        }
+        if ("teacher_method" in firstRatio && typeof firstRatio.teacher_method === "string") {
+          setMethodA(firstRatio.teacher_method)
+          setMethodB("encoder-remove-move")
+        }
+      }
+    }
+    setSelectedSceneId(scene.id)
+    setSelectedFeatureId(scene.target_feature_id)
+    setView("compare")
+  }
+
   async function saveGeometry(name: string, geometry: Geometry) {
     if (editor === "new") {
       const feature = await api.createFeature({ dataset_id: dataset.id, name, geometry, coordinate_space: "local", crs: null })
@@ -223,7 +243,7 @@ function WorkspaceShell({ dataset, datasets, onDatasetChange }: WorkspaceShellPr
               setNotice("Preference recorded")
             }
           }} />}
-          {view === "scenes" && <Suspense fallback={<div className="grid min-h-[calc(100vh-65px)] place-content-center text-sm text-muted-foreground">Opening scene builder…</div>}><ScenesView batches={batchesQuery.data ?? []} datasetId={dataset.id} features={features} jobs={jobsQuery.data ?? []} onArchive={async (scene: Scene) => { await api.archiveScene(scene.id); if (selectedSceneId === scene.id) setSelectedSceneId(null); await scenesQuery.refetch(); setNotice("Scene archived") }} onCancelExtraction={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onCreate={async (input) => { const scene = await api.createScene(input); await scenesQuery.refetch(); return scene }} onExtractionQueued={async () => { await jobsQuery.refetch(); setNotice("Scene extraction queued") }} onRefreshJobs={() => { void jobsQuery.refetch(); void scenesQuery.refetch() }} onReview={(scene: Scene) => { setSelectedSceneId(scene.id); setSelectedFeatureId(scene.target_feature_id); setView("compare") }} onSelect={(scene: Scene) => setSelectedSceneId(scene.id)} scenes={scenes} selectedSceneId={selectedSceneId} /></Suspense>}
+          {view === "scenes" && <Suspense fallback={<div className="grid min-h-[calc(100vh-65px)] place-content-center text-sm text-muted-foreground">Opening scene builder…</div>}><ScenesView batches={batchesQuery.data ?? []} datasetId={dataset.id} features={features} jobs={jobsQuery.data ?? []} onArchive={async (scene: Scene) => { await api.archiveScene(scene.id); if (selectedSceneId === scene.id) setSelectedSceneId(null); await scenesQuery.refetch(); setNotice("Scene archived") }} onCancelExtraction={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onCreate={async (input) => { const scene = await api.createScene(input); await scenesQuery.refetch(); return scene }} onExtractionQueued={async () => { await jobsQuery.refetch(); setNotice("Scene extraction queued") }} onRefreshJobs={() => { void jobsQuery.refetch(); void scenesQuery.refetch() }} onReview={openSceneReview} onSelect={(scene: Scene) => setSelectedSceneId(scene.id)} scenes={scenes} selectedSceneId={selectedSceneId} /></Suspense>}
           {view === "generate" && <GenerateView generators={generatorsQuery.data ?? []} jobs={jobsQuery.data ?? []} onCancel={async (jobId) => { await api.cancelJob(jobId); await jobsQuery.refetch() }} onRefresh={() => { void jobsQuery.refetch(); void featuresQuery.refetch() }} onRun={async (generatorId, batchName, count, seed, parameters) => {
             await api.runGenerator({ dataset_id: dataset.id, generator_id: generatorId, batch_name: batchName, count, seed, parameters })
             await jobsQuery.refetch(); setNotice("Generator run queued")

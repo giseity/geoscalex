@@ -41,7 +41,8 @@ is only four features, so its numbers are a smoke signal, not a statistically us
 
 The v0.6 checkpoint scored all eligible features at 10% and 25% retention. Five features were
 skipped because they contain interior rings or exceed 512 model vertices. The 20 highest-priority
-targets produced 19 contextual scenes; one target had no context within the configured radius.
+targets produced 19 contextual scenes configured for candidate generation and review; one target
+had no context within the configured radius.
 Every created scene records top-k disagreement, normalized Hausdorff quality gap, ratio-level
 components, teacher choice, fallback state, and checkpoint SHA-256.
 
