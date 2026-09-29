@@ -186,6 +186,16 @@ class DatasetVersionItem(Base):
     split: Mapped[str] = mapped_column(String(12))
 
 
+class DatasetVersionScene(Base):
+    __tablename__ = "dataset_version_scenes"
+    dataset_version_id: Mapped[str] = mapped_column(
+        ForeignKey("dataset_versions.id", ondelete="CASCADE"), primary_key=True
+    )
+    scene_id: Mapped[str] = mapped_column(ForeignKey("scenes.id"), primary_key=True)
+    target_revision_id: Mapped[str] = mapped_column(ForeignKey("geometry_revisions.id"))
+    split: Mapped[str] = mapped_column(String(12))
+
+
 class Job(Record):
     __tablename__ = "jobs"
     kind: Mapped[str] = mapped_column(String(80))

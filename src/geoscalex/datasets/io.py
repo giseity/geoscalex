@@ -60,6 +60,8 @@ async def publish_dataset(
     rows: list[dict[str, Any]] = []
     version_items: list[tuple[models.Feature, models.GeometryRevision, str]] = []
     revision_ids: list[str] = []
+    active_revisions: dict[str, models.GeometryRevision] = {}
+    active_features = {feature.id: feature for feature in features}
     for feature in features:
         if feature.current_revision_id is None:
             continue
@@ -95,6 +97,7 @@ async def publish_dataset(
         )
         version_items.append((feature, revision, split))
         revision_ids.append(revision.id)
+        active_revisions[feature.id] = revision
 
     parquet_path = export_dir / "features.parquet"
     table = pa.Table.from_pylist(rows)
@@ -177,6 +180,155 @@ async def publish_dataset(
         compression="zstd",
     )
 
+    scenes = (
+        await session.scalars(
+            select(models.Scene)
+            .where(models.Scene.dataset_id == str(dataset_id))
+            .where(models.Scene.archived_at.is_(None))
+            .order_by(models.Scene.id)
+        )
+    ).all()
+    scene_rows: list[dict[str, Any]] = []
+    scene_member_rows: list[dict[str, Any]] = []
+    version_scenes: list[tuple[models.Scene, models.GeometryRevision, str]] = []
+    current_scene_revisions: dict[str, str] = {}
+    for scene in scenes:
+        target = active_features.get(scene.target_feature_id)
+        scene_target_revision = active_revisions.get(scene.target_feature_id)
+        if target is None or scene_target_revision is None:
+            raise ValueError(f"Scene {scene.name!r} has an archived target")
+        split_group = str(
+            scene.provenance.get("location_group") or target.batch_id or scene.id
+        )
+        split = _split(split_group, split_seed)
+        scene_rows.append(
+            {
+                "scene_id": scene.id,
+                "name": scene.name,
+                "target_feature_id": scene.target_feature_id,
+                "target_revision_id": scene_target_revision.id,
+                "region": scene.region,
+                "locality": scene.locality,
+                "crs": scene.crs,
+                "viewport_json": json.dumps(scene.viewport, sort_keys=True),
+                "style_json": json.dumps(scene.style, sort_keys=True),
+                "scale_denominator": scene.scale_denominator,
+                "zoom": scene.zoom,
+                "provenance_json": json.dumps(scene.provenance, sort_keys=True),
+                "split_group": split_group,
+                "split": split,
+            }
+        )
+        version_scenes.append((scene, scene_target_revision, split))
+        current_scene_revisions[scene.id] = scene_target_revision.id
+        memberships = (
+            await session.scalars(
+                select(models.SceneFeature)
+                .where(models.SceneFeature.scene_id == scene.id)
+                .order_by(models.SceneFeature.z_order, models.SceneFeature.feature_id)
+            )
+        ).all()
+        for membership in memberships:
+            member_revision = active_revisions.get(membership.feature_id)
+            if member_revision is None:
+                raise ValueError(f"Scene {scene.name!r} contains an archived member")
+            scene_member_rows.append(
+                {
+                    "scene_id": scene.id,
+                    "feature_id": membership.feature_id,
+                    "revision_id": member_revision.id,
+                    "role": membership.role,
+                    "importance": membership.importance,
+                    "z_order": membership.z_order,
+                    "style_json": json.dumps(membership.style, sort_keys=True),
+                }
+            )
+
+    scene_schema = pa.schema(
+        [
+            ("scene_id", pa.string()),
+            ("name", pa.string()),
+            ("target_feature_id", pa.string()),
+            ("target_revision_id", pa.string()),
+            ("region", pa.string()),
+            ("locality", pa.string()),
+            ("crs", pa.string()),
+            ("viewport_json", pa.string()),
+            ("style_json", pa.string()),
+            ("scale_denominator", pa.float64()),
+            ("zoom", pa.float64()),
+            ("provenance_json", pa.string()),
+            ("split_group", pa.string()),
+            ("split", pa.string()),
+        ]
+    )
+    scenes_path = export_dir / "scenes.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(scene_rows, schema=scene_schema), scenes_path, compression="zstd"
+    )
+
+    scene_member_schema = pa.schema(
+        [
+            ("scene_id", pa.string()),
+            ("feature_id", pa.string()),
+            ("revision_id", pa.string()),
+            ("role", pa.string()),
+            ("importance", pa.float64()),
+            ("z_order", pa.int64()),
+            ("style_json", pa.string()),
+        ]
+    )
+    scene_members_path = export_dir / "scene_members.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(scene_member_rows, schema=scene_member_schema),
+        scene_members_path,
+        compression="zstd",
+    )
+
+    scene_reviews = (
+        await session.scalars(
+            select(models.SceneReview)
+            .where(models.SceneReview.scene_id.in_(list(current_scene_revisions)))
+            .order_by(models.SceneReview.id)
+        )
+    ).all()
+    scene_review_rows = [
+        {
+            "review_id": review.id,
+            "scene_id": review.scene_id,
+            "revision_id": review.revision_id,
+            "candidate_a_id": review.candidate_a_id,
+            "candidate_b_id": review.candidate_b_id,
+            "choice": review.choice,
+            "acceptability": review.acceptability,
+            "failure_tags": review.failure_tags,
+            "viewport_json": json.dumps(review.viewport, sort_keys=True),
+            "comment": review.comment,
+        }
+        for review in scene_reviews
+        if current_scene_revisions.get(review.scene_id) == review.revision_id
+    ]
+    scene_review_schema = pa.schema(
+        [
+            ("review_id", pa.string()),
+            ("scene_id", pa.string()),
+            ("revision_id", pa.string()),
+            ("candidate_a_id", pa.string()),
+            ("candidate_b_id", pa.string()),
+            ("choice", pa.string()),
+            ("acceptability", pa.string()),
+            ("failure_tags", pa.list_(pa.string())),
+            ("viewport_json", pa.string()),
+            ("comment", pa.string()),
+        ]
+    )
+    scene_reviews_path = export_dir / "scene_reviews.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(scene_review_rows, schema=scene_review_schema),
+        scene_reviews_path,
+        compression="zstd",
+    )
+
     with duckdb.connect() as connection:
         result = connection.execute(
             "SELECT count(*) FROM read_parquet(?)", [str(parquet_path)]
@@ -187,10 +339,17 @@ async def publish_dataset(
     if count != len(rows):
         raise RuntimeError("DuckDB export verification failed")
 
-    export_files = [parquet_path, candidates_path, annotations_path]
+    export_files = [
+        parquet_path,
+        candidates_path,
+        annotations_path,
+        scenes_path,
+        scene_members_path,
+        scene_reviews_path,
+    ]
     manifest = {
         "format": "geoscalex-dataset",
-        "schema_version": 1,
+        "schema_version": 2,
         "dataset_id": str(dataset_id),
         "dataset_name": dataset.name,
         "version": version_number,
@@ -198,6 +357,9 @@ async def publish_dataset(
         "feature_count": len(rows),
         "candidate_count": len(candidate_rows),
         "annotation_count": len(annotation_rows),
+        "scene_count": len(scene_rows),
+        "scene_member_count": len(scene_member_rows),
+        "scene_review_count": len(scene_review_rows),
         "files": [{"path": path.name, "sha256": _checksum(path)} for path in export_files],
     }
     manifest_path = export_dir / "manifest.json"
@@ -219,6 +381,15 @@ async def publish_dataset(
                 dataset_version_id=version.id,
                 feature_id=feature.id,
                 revision_id=revision.id,
+                split=split,
+            )
+        )
+    for scene, revision, split in version_scenes:
+        session.add(
+            models.DatasetVersionScene(
+                dataset_version_id=version.id,
+                scene_id=scene.id,
+                target_revision_id=revision.id,
                 split=split,
             )
         )

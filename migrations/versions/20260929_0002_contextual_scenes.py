@@ -14,7 +14,7 @@ def upgrade() -> None:
     from geoscalex.storage.models import Base
 
     connection = op.get_bind()
-    tables = ["scenes", "scene_features", "scene_reviews"]
+    tables = ["scenes", "scene_features", "scene_reviews", "dataset_version_scenes"]
     Base.metadata.create_all(
         bind=connection,
         checkfirst=True,
@@ -26,7 +26,7 @@ def downgrade() -> None:
     from geoscalex.storage.models import Base
 
     connection = op.get_bind()
-    tables = ["scene_reviews", "scene_features", "scenes"]
+    tables = ["dataset_version_scenes", "scene_reviews", "scene_features", "scenes"]
     Base.metadata.drop_all(
         bind=connection,
         checkfirst=True,
