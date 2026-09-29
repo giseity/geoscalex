@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
 from uuid import UUID
 
@@ -801,38 +802,179 @@ async def import_geojson(session: AsyncSession, data: GeoJsonImportCreate) -> Im
         collection.get("features"), list
     ):
         raise ValueError("Expected a GeoJSON FeatureCollection")
+    if data.coordinate_space.value == "geographic" and not data.crs:
+        raise ValueError("Geographic imports require a CRS")
+    canonical = json.dumps(collection, sort_keys=True, separators=(",", ":"))
+    source_checksum = hashlib.sha256(canonical.encode()).hexdigest()
+    prepared: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for index, item in enumerate(collection["features"]):
+        try:
+            if not isinstance(item, dict) or item.get("type") != "Feature" or not isinstance(
+                item.get("geometry"), dict
+            ):
+                raise ValueError("Expected a GeoJSON Feature")
+            properties = item.get("properties") or {}
+            if not isinstance(properties, dict):
+                raise ValueError("Feature properties must be an object")
+            source_geometry = item["geometry"]
+            geometry_type = source_geometry.get("type")
+            if geometry_type in {"LineString", "Polygon"}:
+                parts = [source_geometry]
+            elif geometry_type == "MultiLineString" and data.explode_multi:
+                parts = [
+                    {"type": "LineString", "coordinates": coordinates}
+                    for coordinates in source_geometry.get("coordinates", [])
+                ]
+            elif geometry_type == "MultiPolygon" and data.explode_multi:
+                parts = [
+                    {"type": "Polygon", "coordinates": coordinates}
+                    for coordinates in source_geometry.get("coordinates", [])
+                ]
+            elif geometry_type in {"MultiLineString", "MultiPolygon"}:
+                raise ValueError("Multi-geometry import requires explode_multi")
+            else:
+                raise ValueError(f"Unsupported geometry type: {geometry_type}")
+            if not parts:
+                raise ValueError("Multi-geometry contains no parts")
+            source_id_value = (
+                properties.get(data.source_id_field)
+                if data.source_id_field
+                else item.get("id")
+            )
+            source_id = str(source_id_value if source_id_value not in (None, "") else index)
+            base_name = str(properties.get("name") or f"Imported feature {index + 1}")
+            for part_index, part in enumerate(parts):
+                try:
+                    analysis = validate_geometry(part)
+                    geometry = analysis.geometry
+                    if data.split_group_field and properties.get(data.split_group_field) not in (
+                        None,
+                        "",
+                    ):
+                        split_group = (
+                            f"{data.source_name}:field:{data.split_group_field}:"
+                            f"{properties[data.split_group_field]}"
+                        )
+                    else:
+                        centroid = shape(geometry).centroid
+                        cell_x = math.floor(centroid.x / data.split_grid_size)
+                        cell_y = math.floor(centroid.y / data.split_grid_size)
+                        split_group = (
+                            f"{data.source_name}:grid:{data.crs or 'local'}:"
+                            f"{data.split_grid_size:g}:{cell_x}:{cell_y}"
+                        )
+                    ranking_payload = json.dumps(
+                        {
+                            "seed": data.seed,
+                            "source_id": source_id,
+                            "part_index": part_index,
+                            "geometry": geometry,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    prepared.append(
+                        {
+                            "rank": hashlib.sha256(ranking_payload.encode()).hexdigest(),
+                            "index": index,
+                            "part_index": part_index,
+                            "part_count": len(parts),
+                            "source_id": source_id,
+                            "name": (
+                                base_name
+                                if len(parts) == 1
+                                else f"{base_name} · part {part_index + 1}"
+                            )[:200],
+                            "geometry": geometry,
+                            "properties": {
+                                **properties,
+                                "split_group": split_group,
+                                "_geoscalex_import": {
+                                    "schema_version": 2,
+                                    "source_feature_id": source_id,
+                                    "source_feature_index": index,
+                                    "part_index": part_index,
+                                    "part_count": len(parts),
+                                    "source_checksum": source_checksum,
+                                },
+                            },
+                        }
+                    )
+                except Exception as error:
+                    rejected.append(
+                        {"index": index, "part_index": part_index, "reason": str(error)}
+                    )
+        except Exception as error:
+            rejected.append({"index": index, "reason": str(error)})
+    if not prepared:
+        raise ValueError("The import contains no eligible LineString or Polygon geometries")
+    selected = sorted(prepared, key=lambda item: (item["rank"], item["index"], item["part_index"]))[
+        : data.max_features
+    ]
+    selected.sort(key=lambda item: (item["index"], item["part_index"]))
     batch = await create_batch(
         session,
         BatchCreate(
             dataset_id=data.dataset_id,
             name=data.batch_name,
-            source="geojson",
-            provenance={"feature_count": len(collection["features"])},
+            source=data.source_name,
+            provenance={
+                "import_schema_version": 2,
+                "format": "geojson",
+                "source_name": data.source_name,
+                "source_uri": data.source_uri or None,
+                "source_license": data.source_license or None,
+                "acquired_at": data.acquired_at or None,
+                "source_file_name": data.source_file_name or None,
+                "source_checksum_sha256": source_checksum,
+                "coordinate_space": data.coordinate_space.value,
+                "crs": data.crs,
+                "source_id_field": data.source_id_field,
+                "split_group_field": data.split_group_field,
+                "split_grid_size": data.split_grid_size,
+                "explode_multi": data.explode_multi,
+                "seed": data.seed,
+                "submitted_feature_count": len(collection["features"]),
+                "eligible_geometry_count": len(prepared),
+                "selected_geometry_count": len(selected),
+                "sampled_out_count": len(prepared) - len(selected),
+                "rejected_count": len(rejected),
+                "declared": data.provenance,
+            },
         ),
     )
     imported: list[UUID] = []
-    rejected: list[dict[str, Any]] = []
-    for index, item in enumerate(collection["features"]):
+    for item in selected:
         try:
-            if item.get("type") != "Feature" or not isinstance(item.get("geometry"), dict):
-                raise ValueError("Expected a GeoJSON Feature")
-            properties = item.get("properties") or {}
             feature = await create_feature(
                 session,
                 FeatureCreate(
                     dataset_id=data.dataset_id,
                     batch_id=batch.id,
-                    name=str(properties.get("name") or f"Imported feature {index + 1}"),
+                    name=item["name"],
                     geometry=item["geometry"],
-                    properties=properties,
-                    coordinate_space="geographic",
-                    crs="EPSG:4326",
-                    source="geojson",
+                    properties=item["properties"],
+                    coordinate_space=data.coordinate_space,
+                    crs=data.crs,
+                    source=data.source_name,
                 ),
             )
             imported.append(feature.id)
         except Exception as error:
-            rejected.append({"index": index, "reason": str(error)})
+            rejected.append(
+                {
+                    "index": item["index"],
+                    "part_index": item["part_index"],
+                    "reason": str(error),
+                }
+            )
     return ImportResult(
-        batch=batch, imported=len(imported), rejected=rejected, feature_ids=imported
+        batch=batch,
+        submitted=len(collection["features"]),
+        eligible=len(prepared),
+        imported=len(imported),
+        sampled_out=len(prepared) - len(selected),
+        rejected=rejected,
+        feature_ids=imported,
     )

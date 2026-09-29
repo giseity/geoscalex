@@ -192,6 +192,31 @@ export type SceneExtractionPreview = {
   samples: SceneExtractionProposal[]
 }
 
+export type GeoJsonImportOptions = {
+  batch_name: string
+  coordinate_space: "geographic" | "local"
+  crs: string | null
+  source_name: string
+  source_uri: string
+  source_license: string
+  acquired_at: string
+  source_file_name: string
+  source_id_field: string | null
+  split_group_field: string | null
+  split_grid_size: number
+  explode_multi: boolean
+  max_features: number
+  seed: number
+}
+
+export type GeoJsonImportResult = {
+  submitted: number
+  eligible: number
+  imported: number
+  sampled_out: number
+  rejected: Array<{ index: number; part_index?: number; reason: string }>
+}
+
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api/v1"
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -291,14 +316,14 @@ export const api = {
   }) => request<Job>("/generator-runs", { method: "POST", body: JSON.stringify(body) }),
   jobs: () => request<Job[]>("/jobs"),
   cancelJob: (jobId: string) => request<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
-  importGeoJson: (datasetId: string, batchName: string, featureCollection: unknown) =>
-    request<{ imported: number; rejected: Array<{ index: number; reason: string }> }>(
+  importGeoJson: (datasetId: string, options: GeoJsonImportOptions, featureCollection: unknown) =>
+    request<GeoJsonImportResult>(
       "/imports/geojson",
       {
         method: "POST",
         body: JSON.stringify({
           dataset_id: datasetId,
-          batch_name: batchName,
+          ...options,
           feature_collection: featureCollection,
         }),
       },

@@ -230,11 +230,28 @@ class GeoJsonImportCreate(ApiModel):
     dataset_id: UUID
     batch_name: str = Field(default="GeoJSON import", min_length=1, max_length=160)
     feature_collection: dict[str, Any]
+    coordinate_space: CoordinateSpace = CoordinateSpace.GEOGRAPHIC
+    crs: str | None = Field(default="EPSG:4326", max_length=120)
+    source_name: str = Field(default="geojson", min_length=1, max_length=80)
+    source_uri: str = Field(default="", max_length=2000)
+    source_license: str = Field(default="", max_length=500)
+    acquired_at: str = Field(default="", max_length=80)
+    source_file_name: str = Field(default="", max_length=500)
+    source_id_field: str | None = Field(default=None, max_length=160)
+    split_group_field: str | None = Field(default=None, max_length=160)
+    split_grid_size: float = Field(default=0.25, gt=0)
+    explode_multi: bool = True
+    max_features: int = Field(default=10_000, ge=1, le=100_000)
+    seed: int = 4812
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class ImportResult(ApiModel):
     batch: BatchRead
+    submitted: int
+    eligible: int
     imported: int
+    sampled_out: int
     rejected: list[dict[str, Any]]
     feature_ids: list[UUID]
 
@@ -334,6 +351,7 @@ class SceneReviewRead(SceneReviewCreate):
 class SceneExtractionCreate(ApiModel):
     dataset_id: UUID
     target_batch_id: UUID | None = None
+    target_feature_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
     region: SceneRegion = SceneRegion.EUROPE
     locality: str = Field(default="", max_length=240)
     location_group_prefix: str = Field(default="auto", min_length=1, max_length=120)
