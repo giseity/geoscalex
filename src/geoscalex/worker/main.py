@@ -132,7 +132,10 @@ async def serve() -> None:
 
 
 def run() -> None:
-    asyncio.run(serve())
+    try:
+        asyncio.run(serve())
+    except KeyboardInterrupt:
+        logger.info("GeoScaleX worker stopped")
 
 
 if __name__ == "__main__":
